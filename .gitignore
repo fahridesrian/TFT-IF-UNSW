@@ -58,6 +58,9 @@ references_addendum.md
 # Archive files
 nids_tft_if.zip
 
+# Whole dataset folder
+data/
+
 # Large model files (optional)
 *.pt
 *.pth
