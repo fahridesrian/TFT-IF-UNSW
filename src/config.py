@@ -72,7 +72,7 @@ class ModelConfig:
 
 @dataclass
 class TrainConfig:
-    batch_size: int = 256
+    batch_size: int = 1024
     epochs: int = 30
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5

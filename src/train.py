@@ -21,12 +21,22 @@ from tqdm.auto import tqdm
 from config import TRAIN, MODEL
 from tft_model import TemporalFusionTransformer
 
+torch.backends.cudnn.benchmark = True
 
 def make_loader(X: np.ndarray, Y: np.ndarray, batch_size: int, shuffle: bool):
-    X_t = torch.tensor(X, dtype=torch.float32)
-    Y_t = torch.tensor(Y, dtype=torch.long)
+    # X_t = torch.tensor(X, dtype=torch.float32)
+    # Y_t = torch.tensor(Y, dtype=torch.long)
+    X_t = torch.from_numpy(X).float()
+    Y_t = torch.from_numpy(Y).long()
     ds = TensorDataset(X_t, Y_t)
-    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+    return DataLoader(
+    ds,
+    batch_size=batch_size,
+    shuffle=shuffle,
+    num_workers=6,
+    pin_memory=True,
+    persistent_workers=True if 6 > 0 else False,
+    )
 
 
 def compute_weights(Y_train: np.ndarray, num_classes: int) -> torch.Tensor:
@@ -90,15 +100,33 @@ def train_model(
             train_loader, desc=f"[{desc}] epoch {epoch+1}/{train_cfg.epochs} (train)",
             disable=not show_progress, leave=False,
         )
+        use_amp = device.type == "cuda"
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         for xb, yb in batch_bar:
-            xb, yb = xb.to(device), yb.to(device)
-            optimizer.zero_grad()
-            logits = model(xb)  # (b, T, C)
-            loss = criterion(logits.reshape(-1, model_cfg.num_classes), yb.reshape(-1))
-            loss.backward()
-            optimizer.step()
+            # xb, yb = xb.to(device), yb.to(device)
+            # optimizer.zero_grad()
+            # logits = model(xb)  # (b, T, C)
+            # loss = criterion(logits.reshape(-1, model_cfg.num_classes), yb.reshape(-1))
+            # loss.backward()
+            # optimizer.step()
+            # train_losses.append(loss.item())
+            # batch_bar.set_postfix(loss=f"{loss.item():.4f}")
+            
+            xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                logits = model(xb)  # (b, T, C)
+                loss = criterion(logits.reshape(-1, model_cfg.num_classes), yb.reshape(-1))
+            
+            # loss.backward()
+            scaler.scale(loss).backward()
+            # optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             train_losses.append(loss.item())
             batch_bar.set_postfix(loss=f"{loss.item():.4f}")
+
 
         model.eval()
         val_losses = []
@@ -108,9 +136,12 @@ def train_model(
         )
         with torch.no_grad():
             for xb, yb in val_bar:
-                xb, yb = xb.to(device), yb.to(device)
-                logits = model(xb)
-                loss = criterion(logits.reshape(-1, model_cfg.num_classes), yb.reshape(-1))
+                xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+                
+                with torch.amp.autocast("cuda", enabled=use_amp):
+                    logits = model(xb)
+                    loss = criterion(logits.reshape(-1, model_cfg.num_classes), yb.reshape(-1))
+                    
                 val_losses.append(loss.item())
                 val_bar.set_postfix(loss=f"{loss.item():.4f}")
 
