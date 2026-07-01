@@ -1,0 +1,63 @@
+"""
+evaluate.py
+Metrik evaluasi sesuai proposal Bagian 5.8: akurasi, precision, recall,
+F1-score (macro & weighted), false alarm rate (FAR, agregasi Normal-vs-Attack
+per Bagian 5.8.4), dan confusion matrix multikelas.
+"""
+import numpy as np
+import torch
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, confusion_matrix,
+)
+
+from config import DATA, MODEL, TRAIN
+
+
+@torch.no_grad()
+def predict(model, X: np.ndarray, batch_size: int = 256, device: str = None):
+    device = device or (TRAIN.device if torch.cuda.is_available() else "cpu")
+    model.eval()
+    model.to(device)
+    preds = []
+    for i in range(0, len(X), batch_size):
+        xb = torch.tensor(X[i:i + batch_size], dtype=torch.float32).to(device)
+        logits = model(xb)
+        pred = torch.argmax(logits, dim=-1).cpu().numpy()  # (b, T)
+        preds.append(pred)
+    return np.concatenate(preds, axis=0) if preds else np.empty((0,))
+
+
+def _false_alarm_rate(y_true_flat, y_pred_flat, normal_idx: int) -> float:
+    """FAR = FP / (FP + TN), agregasi Normal-vs-Attack (proposal 5.8.4):
+    TN = Normal diprediksi Normal; FP = Normal diprediksi sebagai kelas serangan apa pun."""
+    normal_mask = y_true_flat == normal_idx
+    if normal_mask.sum() == 0:
+        return float("nan")
+    predicted_normal = y_pred_flat[normal_mask] == normal_idx
+    tn = predicted_normal.sum()
+    fp = (~predicted_normal).sum()
+    return float(fp / (fp + tn)) if (fp + tn) > 0 else float("nan")
+
+
+def evaluate_model(model, X: np.ndarray, Y: np.ndarray, class_names=None):
+    class_names = class_names or list(DATA.classes_used)
+    normal_idx = class_names.index("Normal")
+
+    y_pred = predict(model, X)  # (N, T)
+    y_true_flat = Y.reshape(-1)
+    y_pred_flat = y_pred.reshape(-1)
+
+    labels = list(range(len(class_names)))
+    results = {
+        "accuracy": accuracy_score(y_true_flat, y_pred_flat),
+        "precision_macro": precision_score(y_true_flat, y_pred_flat, labels=labels, average="macro", zero_division=0),
+        "recall_macro": recall_score(y_true_flat, y_pred_flat, labels=labels, average="macro", zero_division=0),
+        "f1_macro": f1_score(y_true_flat, y_pred_flat, labels=labels, average="macro", zero_division=0),
+        "precision_weighted": precision_score(y_true_flat, y_pred_flat, labels=labels, average="weighted", zero_division=0),
+        "recall_weighted": recall_score(y_true_flat, y_pred_flat, labels=labels, average="weighted", zero_division=0),
+        "f1_weighted": f1_score(y_true_flat, y_pred_flat, labels=labels, average="weighted", zero_division=0),
+        "false_alarm_rate": _false_alarm_rate(y_true_flat, y_pred_flat, normal_idx),
+        "confusion_matrix": confusion_matrix(y_true_flat, y_pred_flat, labels=labels).tolist(),
+        "class_names": class_names,
+    }
+    return results
