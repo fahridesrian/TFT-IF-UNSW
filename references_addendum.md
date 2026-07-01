@@ -40,6 +40,11 @@ Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B.,
     Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., &
     Duchesnay, E. (2011). Scikit-learn: Machine learning in Python. Journal
     of Machine Learning Research, 12, 2825-2830.
+
+Micikevicius, P., Narang, S., Alben, J., Diamos, G., Elsen, E., Garcia, D.,
+    Ginsburg, B., Houston, M., Kuchaiev, O., Venkatesh, G., & Wu, H. (2018).
+    Mixed precision training. International Conference on Learning
+    Representations (ICLR). https://arxiv.org/abs/1710.03740
 ```
 
 ## Peta rujukan -> komponen kode

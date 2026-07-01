@@ -26,6 +26,17 @@ Anda lakukan" di bawah wajib dibaca sebelum eksperimen sungguhan.
   menyamakan casing pada `attack_cat`/`proto`/`state`/`service` (mis.
   `' fuzzers '` → `Fuzzers`). Kasus ini sekarang direproduksi permanen di
   `tests/make_dummy_data.py` sebagai regression test.
+- **[Fix]** `train.py`: mengganti `copy.deepcopy(model.state_dict())` (dua
+  tempat) dengan snapshot ke CPU (`_cpu_state_dict`). `deepcopy` langsung di
+  tensor CUDA rapuh pada beberapa kombinasi driver/CUDA Windows dan memicu
+  `CUDA error: unknown error` yang sebenarnya berasal dari operasi async
+  sebelumnya. Bonus: menghindari duplikasi memori GPU untuk checkpoint
+  terbaik.
+- **[Fix]** `train.py`: `GradScaler` (AMP) sebelumnya dibuat ulang setiap
+  epoch — ini membuang adaptasi loss-scale yang seharusnya berlangsung
+  sepanjang training. Sekarang diinisialisasi sekali di luar loop epoch.
+- **[Fitur]** `config.py` / `train.py`: `num_workers` DataLoader kini bisa
+  diatur lewat `TrainConfig.num_workers` (default 4), tidak lagi hardcoded.
 
 ## Struktur proyek
 
