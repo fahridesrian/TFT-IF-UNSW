@@ -28,7 +28,7 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Logs
-*.log
+# *.log
 
 # ==========================
 # IDE
@@ -47,7 +47,7 @@ Thumbs.db
 # ==========================
 
 # Model checkpoints
-checkpoints/
+# checkpoints/
 
 # Handoff documentation
 # handoff.md
@@ -62,10 +62,10 @@ nids_tft_if.zip
 data/
 
 # Large model files (optional)
-*.pt
-*.pth
-*.ckpt
-*.safetensors
+# *.pt
+# *.pth
+# *.ckpt
+# *.safetensors
 
 # Environment variables
 .env
