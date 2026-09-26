@@ -1,7 +1,9 @@
 # proposal_summary.md — Konteks Proyek TFT-IF (UNSW-NB15)
 
 > **Fungsi dokumen ini**: anchor konteks utama untuk (1) pembuatan `summary.md` per paper
-> di `model_papers/`, dan (2) penyusunan `spec.md` sebagai acuan kode.
+> di `model_papers/summaries/`, dan (2) penyusunan `spec.md` sebagai acuan kode.
+> **`spec.md` SUDAH TERSEDIA di root** (as-built, 2026-09-27) — jadikan itu referensi
+> teknis utama; dokumen ini menjadi konteks proposal & peta bahan.
 > **Sumber**: bacaan penuh `Proposal_Skripsi_Matematika_Fahri_Desian_v7_310526.pdf` (v7),
 > `handoff.md`, `references_addendum.md`, `src/config.py`, `main.py`.
 > **Dibuat**: 2026-09-26.
@@ -161,8 +163,8 @@ pada data UNSW-NB15 asli**; `data/raw/` masih kosong.
    ya, dengan justifikasi identity-leak di skripsi) atau pertahankan.
 2. **W & T** — ablasi belum dijalankan (default 10/3). Juga rasio split final
    (kode 70:15:15; proposal menyebut 80:10:10 sebagai kandidat).
-3. **Agregasi metrik antar-horizon** — dengan output T langkah, perlu dicek/diputuskan
-   bagaimana metrik diagregasi antar langkah target (verifikasi `evaluate.py` saat spec).
+3. **Agregasi metrik antar-horizon** — **SUDAH DIJAWAB di spec.md §8**: semua metrik
+   dihitung pada pasangan ter-flatten `(N·T)`; agregasi per-horizon menjadi opsi pengembangan.
 4. **Oversampling/undersampling pembanding** (6.e.iii) — belum diimplementasikan;
    putuskan perlu/tidak untuk skripsi.
 5. **EDA (6.c)** — di luar pipeline (notebook terpisah) atau dimasukkan.
@@ -182,12 +184,17 @@ pada data UNSW-NB15 asli**; `data/raw/` masih kosong.
 | `3292500.3330701.pdf` | Akiba et al. 2019 | Optuna (tuning) |
 | `1710.03740v3.pdf` | Micikevicius et al. 2018 | mixed precision training (AMP) |
 
-- **Belum ada di folder** (paper inti proposal): Lim et al. 2021 (TFT, arXiv 1912.09363),
-  Liu et al. 2008/2012 (IF), Moustafa & Slay 2015/2016 (dataset),
-  Psychogyios et al. 2024 (sliding window IDS). Bisa ditambahkan bila ingin dibuatkan summary.
-- **Konvensi file summary**: `model_papers/<firstauthor><tahun>_<topik>_summary.md`,
-  contoh `vaswani2017_attention_summary.md`. Isi hanya bagian yang benar-benar dipakai
-  implementasi (formula, komponen, hyperparameter, perilaku yang menempel ke kode).
+- **Main paper (sudah diringkas)**: `1912.09363v3.pdf` → `lim2021_tft_summary.md`
+  (Lim et al. 2021, TFT — arsitektur inti); `liu2008.pdf` →
+  `liu2008_isolation_forest_summary.md` (Liu et al. 2008, IF — algoritme skor anomali,
+  termasuk justifikasi §5.4 untuk pelatihan normal-only).
+- **Belum ada di folder** (opsional): Moustafa & Slay 2015/2016 (dataset),
+  Psychogyios et al. 2024 (sliding window IDS), Liu et al. 2012 (versi jurnal IF).
+- **Konvensi file summary** (folder khusus): `model_papers/summaries/<firstauthor><tahun>_<topik>_summary.md`.
+  Isi hanya bagian yang benar-benar dipakai implementasi (formula, komponen,
+  hyperparameter, perilaku yang menempel ke kode).
+- **Progress summary: SELESAI 11/11** — 9 referensi implementasi + 2 main paper
+  (`lim2021_tft`, `liu2008_isolation_forest`). Bahan lengkap untuk `spec.md`.
 
 ## 10. Catatan Struktur Kode (koreksi terhadap `handoff.md`)
 
