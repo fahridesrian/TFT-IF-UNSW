@@ -4,10 +4,19 @@ Isolation Forest (Liu et al., 2008, 2012) digunakan HANYA sebagai penghasil
 skor anomali (anomaly scorer), bukan classifier akhir (proposal Bagian 5.3
 dan 6.f). IF dilatih hanya pada subset kelas Normal di data latih, sehingga
 skor merepresentasikan derajat penyimpangan terhadap pola lalu lintas normal.
-Skor dinormalisasi ke (0,1) memakai statistik train saja (hindari leakage),
-lalu ditempel sebagai fitur tambahan ke-(F+1).
+
+Skor yang ditempel adalah s(x, n) LITERAL dari Persamaan 2 proposal
+(keputusan terkunci A11/2026-09-27):
+
+    s(x, n) = 2^(-E[h(x)] / c(n)),   c(n) = 2H(n-1) - 2(n-1)/n
+
+sklearn `IsolationForest.score_samples` mengembalikan -s(x) persis
+(implementasinya mengikuti Algorithm 3 Liu et al., termasuk penyesuaian
+c(Size) pada external node), sehingga s = -score_samples berada di (0,1):
+mendekati 1 berarti anomali, sekitar 0.5 ambigu, mendekati 0 normal.
+Tidak ada normalisasi ulang (min-max dihapus) agar rumus yang dipaparkan
+di skripsi identik dengan angka yang mengalir ke model.
 """
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
@@ -30,36 +39,23 @@ def fit_isolation_forest(train_df: pd.DataFrame, feature_cols: list) -> Isolatio
     return iso
 
 
-def score_and_attach(
-    iso: IsolationForest, df: pd.DataFrame, feature_cols: list,
-    score_min: float = None, score_max: float = None,
-):
-    """Menghitung skor anomali (semakin besar = semakin anomali, mengikuti
-    konvensi s(x,n) pada Persamaan 2 proposal) dan menempelkannya sebagai
-    kolom 'if_score' baru. Normalisasi min-max memakai score_min/score_max
-    dari TRAIN (dihitung di luar & dipakai ulang untuk val/test)."""
-    raw_scores = iso.decision_function(df[feature_cols].values)  # makin besar = makin normal
-    anomaly_scores = -raw_scores  # balik tanda: makin besar = makin anomali
-
-    if score_min is None:
-        score_min = anomaly_scores.min()
-    if score_max is None:
-        score_max = anomaly_scores.max()
-    denom = (score_max - score_min) if (score_max - score_min) != 0 else 1e-8
-    norm_scores = (anomaly_scores - score_min) / denom
-    norm_scores = np.clip(norm_scores, 0.0, 1.0)
+def score_and_attach(iso: IsolationForest, df: pd.DataFrame, feature_cols: list):
+    """Hitung skor anomali literal s(x,n) = -score_samples (Liu et al. 2008,
+    Eq. 2), tanpa normalisasi tambahan; makin besar = makin anomali. Ditempel
+    sebagai kolom 'if_score' (fitur ke-(F+1))."""
+    anomaly_scores = -iso.score_samples(df[feature_cols].values)
 
     out_df = df.copy()
-    out_df["if_score"] = norm_scores
-    return out_df, score_min, score_max
+    out_df["if_score"] = anomaly_scores
+    return out_df
 
 
 def integrate_isolation_forest(train_df, val_df, test_df, feature_cols: list):
     iso = fit_isolation_forest(train_df, feature_cols)
 
-    train_df2, smin, smax = score_and_attach(iso, train_df, feature_cols)
-    val_df2, _, _ = score_and_attach(iso, val_df, feature_cols, smin, smax)
-    test_df2, _, _ = score_and_attach(iso, test_df, feature_cols, smin, smax)
+    train_df2 = score_and_attach(iso, train_df, feature_cols)
+    val_df2 = score_and_attach(iso, val_df, feature_cols)
+    test_df2 = score_and_attach(iso, test_df, feature_cols)
 
     new_feature_cols = feature_cols + ["if_score"]
     return train_df2, val_df2, test_df2, new_feature_cols, iso

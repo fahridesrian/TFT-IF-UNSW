@@ -2,8 +2,10 @@
 
 > **Fungsi dokumen ini**: anchor konteks utama untuk (1) pembuatan `summary.md` per paper
 > di `model_papers/summaries/`, dan (2) penyusunan `spec.md` sebagai acuan kode.
-> **`spec.md` SUDAH TERSEDIA di root** (as-built, 2026-09-27) — jadikan itu referensi
-> teknis utama; dokumen ini menjadi konteks proposal & peta bahan.
+> **`spec.md` v1.1 SUDAH TERSEDIA di root** — 14 keputusan terbuka (A1–A14) sudah
+> terkunci (2026-09-27) + pembelaan skripsi + implementasi + smoke test lolos.
+> Jadikan `spec.md` v1.1 referensi teknis utama; dokumen ini menjadi konteks
+> proposal & peta bahan.
 > **Sumber**: bacaan penuh `Proposal_Skripsi_Matematika_Fahri_Desian_v7_310526.pdf` (v7),
 > `handoff.md`, `references_addendum.md`, `src/config.py`, `main.py`.
 > **Dibuat**: 2026-09-26.
@@ -82,15 +84,12 @@
   seperti `0x000c`, spasi kosong), casing/whitespace tidak konsisten pada
   `attack_cat`/`proto`/`state`/`service`.
 
-### ⚠️ Diskrepansi penting: jumlah fitur proposal vs kode
+### ✔ Diskrepansi fitur proposal vs kode: TERSELESAIKAN (A1, 2026-09-27)
 
-- **Proposal (Bagian 5.5)**: 45 fitur input dasar (49 − `attack_cat` − `Label` − `Stime` −
-  `Ltime`); TFT-IF = **46** fitur (dengan skor anomali).
-- **Kode saat ini** (`config.py → id_cols_to_drop`): `srcip, sport, dstip, dsport`
-  di-drop (kardinalitas tinggi / risiko *identity leak*) → TFT-base = **41** fitur,
-  TFT-IF = **42**.
-- **Perlu keputusan**: ikuti kode & revisi angka di skripsi, atau ubah kode agar konsisten
-  dengan proposal. (Lihat §8.)
+- **Kode (terkunci)**: `srcip, sport, dstip, dsport` di-drop → TFT-base = **41**,
+  TFT-IF = **42**. Pembelaan lengkap di `spec.md` §0.1 (identity leak, tanpa skema
+  encoding di proposal, pseudo-kategorikal hex, framing perilaku). Angka 45/46 di
+  proposal direvisi di skripsi; varian 45/46 opsional sebagai cek sensitivitas.
 
 ## 4. Pipeline Eksperimen (Bagian 6 proposal) — pemetaan ke kode
 
@@ -101,13 +100,13 @@ iteratif pada: strategi balancing, ablasi W/T/rasio, dan retrain fitur terpilih 
 |---|---|---|---|
 | 6.a studi literatur | — | — | (non-kode) |
 | 6.b pengumpulan data | Muat 4 CSV + dokumen fitur | `data_loading.py` | ✔ (cek header CSV asli) |
-| 6.c EDA & visualisasi | Distribusi kelas, imbalance, null/inf/dup, deskriptif, histogram, boxplot, heatmap, bar chart | — | ✘ belum ada modul (ekspektasi: notebook) |
-| 6.d praproses | Filter 4 kelas; bersihkan null/inf/dup; urut kronologis; split kronologis **tanpa shuffle** (kandidat 70:15:15 / 80:10:10); encoding kategorikal (`proto, service, state`) fit-on-train; Min-Max fit-on-train; anti data leakage | `preprocessing.py` | ✔ (split 70:15:15; + fix string liar & normalisasi string) |
+| 6.c EDA & visualisasi | Distribusi kelas, imbalance, null/inf/dup, deskriptif, histogram, boxplot, heatmap, bar chart | `eda.py` | ✔ (A14; output `logs/eda/`) |
+| 6.d praproses | Filter 4 kelas (+assertion A10); bersihkan null/inf/dup; urut kronologis; split 70:15:15 tanpa shuffle (A2); **imputasi median fit-on-train (A8)**; encoding + token "unknown" (A9); Min-Max kontinu fit-on-train | `preprocessing.py` | ✔ (v1.1) |
 | 6.e imbalance | Baseline tanpa balancing dulu; utama **class weighting** hanya di data latih; oversampling/undersampling hanya pembanding | `train.py` (flag `use_class_weighting`) | ✔ class weighting; ✘ oversampling/undersampling |
 | 6.f integrasi IF | IF *unsupervised* pada subset Normal-train (`n_estimators`, `max_samples`, `random_state`; `contamination` tak dipakai utk threshold); skor kontinu untuk semua split; fitur ke-(F+1) | `isolation_forest_module.py` | ✔ |
-| 6.g sliding window | Sekuens W→T per split; jaga batas antar-split **dan** batas antar-file/segmen; ablasi W, T, rasio | `sliding_window.py` | ✔ (W=10, T=3, stride=1 **placeholder**) |
-| 6.h bangun & latih TFT | Konfigurasi `encoder_length, prediction_length, hidden_size`; TFT-base vs TFT-IF paralel; loss multikelas + Adam; LR scheduler; validasi berkala + early stopping | `tft_model.py`, `train.py`, `hyperparameter_tuning.py` (Optuna, objektif F1-macro validasi) | ✔ |
-| 6.i evaluasi | Metrik: akurasi, presisi, recall, F1 (macro & weighted), FAR; confusion matrix; bandingkan base vs IF & dengan/tanpa balancing | `evaluate.py` | ✔ |
+| 6.g sliding window | Sekuens W→T per split; jaga batas antar-split **dan** batas antar-file/segmen; ablasi W, T, rasio | `sliding_window.py` + `--window/--horizon` | ✔; ablasi terkunci A3 (grid W∈{10,25,50}×T∈{1,3}, selektor F1-macro val, anchor Psychogyios 2024) — **belum dieksekusi** |
+| 6.h bangun & latih TFT | Konfigurasi `encoder_length, prediction_length, hidden_size`; TFT-base vs TFT-IF paralel; loss multikelas + Adam; LR scheduler; validasi berkala + early stopping | `tft_model.py`, `train.py`, `hyperparameter_tuning.py` (Optuna, objektif F1-macro validasi) | ✔ (v1.1: interpretable attention Eq.13–16 + embedding kategorikal) |
+| 6.i evaluasi | Metrik: akurasi, presisi, recall, F1 (macro & weighted), FAR; confusion matrix; bandingkan base vs IF & dengan/tanpa balancing | `evaluate.py` | ✔ (v1.1: + per-kelas & per-horizon, metrik val utk ablasi) |
 | 6.j interpretabilitas | Feature importance VSN; attention weight; kontribusi skor IF; visualisasi; **opsional** retrain dengan fitur terpilih VSN (pendukung) | `interpret.py` | ✔ VSN+attention; ✘ retrain fitur terpilih VSN |
 
 Keputusan desain yang **sudah dikunci kode** (dari `handoff.md` + `config.py`):
@@ -154,21 +153,34 @@ Keputusan desain yang **sudah dikunci kode** (dari `handoff.md` + `config.py`):
 | Train | batch=1024, epochs=30, lr=1e-3, wd=1e-5, ES patience=5, scheduler patience=2/factor 0.5, AMP, seed 42, num_workers=6 | target GPU RTX 3060 12GB |
 
 Status verifikasi: pipeline **lulus smoke test end-to-end dengan data sintetis**
-(bentuk mirip UNSW-NB15, termasuk null/inf/duplikat tersisip) — **belum pernah dijalankan
-pada data UNSW-NB15 asli**; `data/raw/` masih kosong.
+pada versi v1.1 (2026-09-27, setelah refactor keputusan A1–A14; termasuk
+`eda.py`) — **belum pernah dijalankan pada data UNSW-NB15 asli** dengan
+konfigurasi final; `data/raw/` masih berisi dummy (regenerate saat run asli).
 
-## 8. Keputusan yang Masih Menggantung (untuk spec.md)
+## 8a. Keputusan Terkunci (ringkas — detail & pembelaan di `spec.md` §0)
 
-1. **41/42 vs 45/46 fitur** — setujui drop `srcip/sport/dstip/dsport` (rekomendasi:
-   ya, dengan justifikasi identity-leak di skripsi) atau pertahankan.
-2. **W & T** — ablasi belum dijalankan (default 10/3). Juga rasio split final
-   (kode 70:15:15; proposal menyebut 80:10:10 sebagai kandidat).
-3. **Agregasi metrik antar-horizon** — **SUDAH DIJAWAB di spec.md §8**: semua metrik
-   dihitung pada pasangan ter-flatten `(N·T)`; agregasi per-horizon menjadi opsi pengembangan.
-4. **Oversampling/undersampling pembanding** (6.e.iii) — belum diimplementasikan;
-   putuskan perlu/tidak untuk skripsi.
-5. **EDA (6.c)** — di luar pipeline (notebook terpisah) atau dimasukkan.
-6. **Retrain dengan fitur terpilih VSN** (6.j.ii, sifat pendukung) — prioritas rendah.
+A1: 41/42 fitur · A2: 70:15:15 · A3: ablasi W∈{10,25,50}×T∈{1,3} (TFT-IF,
+selektor F1-macro val, anchor Psychogyios 2024: F1 jenuh di W=50) ·
+A4: class weighting `balanced` · A5: early stopping val_loss (Prechelt 1998 —
+tambah bibliografi) · A6: hyperparameter identik kedua model · A7: CSV
+headerless 49 kolom · A8: imputasi median fit-on-train · A9: token "unknown" ·
+A10: assertion attack_cat kosong∧label=1 · A11: skor IF literal s(x,n)
+(`-score_samples`, tanpa min-max) · A12: interpretable attention Eq. 13–16 ·
+A13: entity embeddings kategorikal (tanpa scaler utk kategorikal — hindari
+bug round-off) · A14: per-kelas, per-horizon, distribusi split, eda.py.
+
+## 8. Keputusan yang Masih Menggantung (lihat `spec.md` §12)
+
+Semua keputusan desain telah terkunci (A1–A14, `spec.md` §0). Tersisa hanya
+**eksekusi** dan item opsional:
+
+1. **Eksekusi ablasi W/T** (A3) — perintah siap: `python main.py --window W --horizon T --epochs 30`; 6 kombinasi ≈ 3 jam (W=50 butuh ±24–32 GB RAM).
+2. **Sensitivitas 80:10:10** — opsional.
+3. **Oversampling/undersampling pembanding** (6.e.iii) — class weighting terkunci
+   sebagai strategi utama (A4); comparator opsional bila waktu.
+4. **Retrain fitur terpilih VSN** (6.j.ii) & **persentil importance** — opsional.
+5. **Tambah Prechelt (1998) ke bibliografi** (dasar A5).
+6. **Checkpoint lama tidak valid** — arsitektur berubah (A12/A13); retrain wajib.
 
 ## 9. Inventaris Paper di `model_papers/` & Rencana Summary
 
@@ -183,6 +195,7 @@ pada data UNSW-NB15 asli**; `data/raw/` masih kosong.
 | `pedregosa11a.pdf` | Pedregosa et al. 2011 | scikit-learn: MinMaxScaler, LabelEncoder, IsolationForest, metrik |
 | `3292500.3330701.pdf` | Akiba et al. 2019 | Optuna (tuning) |
 | `1710.03740v3.pdf` | Micikevicius et al. 2018 | mixed precision training (AMP) |
+| `prechelt1998.pdf` | Prechelt 1998 | early stopping (keputusan A5): kelas kriteria GL/PQ/UP; patience≈kelas UP — tradeoff terbaik & robust utk split kronologis |
 
 - **Main paper (sudah diringkas)**: `1912.09363v3.pdf` → `lim2021_tft_summary.md`
   (Lim et al. 2021, TFT — arsitektur inti); `liu2008.pdf` →
@@ -193,8 +206,9 @@ pada data UNSW-NB15 asli**; `data/raw/` masih kosong.
 - **Konvensi file summary** (folder khusus): `model_papers/summaries/<firstauthor><tahun>_<topik>_summary.md`.
   Isi hanya bagian yang benar-benar dipakai implementasi (formula, komponen,
   hyperparameter, perilaku yang menempel ke kode).
-- **Progress summary: SELESAI 11/11** — 9 referensi implementasi + 2 main paper
-  (`lim2021_tft`, `liu2008_isolation_forest`). Bahan lengkap untuk `spec.md`.
+- **Progress summary: SELESAI 12/12** — 9 referensi implementasi + 3 pendukung
+  (`lim2021_tft`, `liu2008_isolation_forest`, `prechelt1998_early_stopping`).
+  Bahan lengkap untuk `spec.md`.
 
 ## 10. Catatan Struktur Kode (koreksi terhadap `handoff.md`)
 

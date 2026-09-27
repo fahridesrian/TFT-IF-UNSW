@@ -18,7 +18,7 @@ import os
 import sys
 
 # Memungkinkan `python main.py` dijalankan langsung dari root repo tanpa
-# perlu `pip install -e .` lebih dulu (package ada di src/nids_tft_if).
+# perlu `pip install -e .` lebih dulu (modul flat di src/).
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 import numpy as np
@@ -41,6 +41,10 @@ def parse_args():
     p.add_argument("--tune", action="store_true", help="Jalankan Optuna hyperparameter tuning")
     p.add_argument("--n-trials", type=int, default=None)
     p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--window", type=int, default=None,
+                   help="Override WINDOW.W (untuk ablasi W/T, proposal 6.g.v)")
+    p.add_argument("--horizon", type=int, default=None,
+                   help="Override WINDOW.T (untuk ablasi W/T, proposal 6.g.v)")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args()
 
@@ -54,6 +58,14 @@ def main():
     train_cfg = copy.deepcopy(TRAIN)
     if args.epochs:
         train_cfg.epochs = args.epochs
+    # Override W/T untuk ablasi tanpa menyentuh config.py (WINDOW adalah
+    # singleton config yang juga dibaca sliding_window.build_windows).
+    if args.window:
+        WINDOW.W = args.window
+    if args.horizon:
+        WINDOW.T = args.horizon
+    if verbose and (args.window or args.horizon):
+        print(f"    Override window: W={WINDOW.W}, T={WINDOW.T}")
 
     # 1. Load data (Bagian 6.b)
     if verbose:
@@ -65,6 +77,20 @@ def main():
         print("[2/8] Praproses data ...")
     train_df, val_df, test_df, artifacts = run_preprocessing(raw_df)
     feature_cols = artifacts.feature_cols  # belum termasuk if_score
+    cat_features = artifacts.categorical_feature_indices or {}
+
+    # Laporan distribusi kelas per split (keputusan A14c/2026-09-27):
+    # transparansi imbalance sejak awal pipeline.
+    split_class_distribution = {}
+    for name, d in [("train", train_df), ("val", val_df), ("test", test_df)]:
+        counts = d[DATA.target_col].value_counts().sort_index()
+        split_class_distribution[name] = {
+            DATA.classes_used[int(cls)]: int(cnt) for cls, cnt in counts.items()
+        }
+    if verbose:
+        print("    Distribusi kelas per split:")
+        for name, dist in split_class_distribution.items():
+            print(f"      {name}: {dist}")
 
     # 3. Integrasi Isolation Forest (Bagian 6.f)
     if verbose:
@@ -102,7 +128,7 @@ def main():
             print("[5/8] Menjalankan hyperparameter tuning (Optuna) pada TFT-IF ...")
         best_params, _ = run_tuning(
             Xtr_if, Ytr_if, Xval_if, Yval_if, num_features=Xtr_if.shape[-1],
-            n_trials=args.n_trials,
+            n_trials=args.n_trials, categorical_features=cat_features,
         )
         if verbose:
             print(f"    Best params: {best_params}")
@@ -121,6 +147,7 @@ def main():
         Xtr_base, Ytr, Xval_base, Yval, num_features=Xtr_base.shape[-1],
         model_cfg=model_cfg, train_cfg=train_cfg, verbose=verbose,
         desc="TFT-base", show_progress=verbose,
+        categorical_features=cat_features,
     )
 
     if verbose:
@@ -129,6 +156,7 @@ def main():
         Xtr_if, Ytr_if, Xval_if, Yval_if, num_features=Xtr_if.shape[-1],
         model_cfg=model_cfg, train_cfg=train_cfg, verbose=verbose,
         desc="TFT-IF", show_progress=verbose,
+        categorical_features=cat_features,
     )
 
     torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_base.pt"))
@@ -139,6 +167,11 @@ def main():
         print("[7/8] Mengevaluasi model pada data uji ...")
     results_base = evaluate_model(model_base, Xte_base, Yte)
     results_if = evaluate_model(model_if, Xte_if, Yte_if)
+
+    # Metrik validasi untuk seleksi ablasi W/T (selektor = F1-macro validasi,
+    # proposal 6.g.v; data uji tidak boleh dipakai memilih konfigurasi).
+    val_results_base = evaluate_model(model_base, Xval_base, Yval)
+    val_results_if = evaluate_model(model_if, Xval_if, Yval_if)
 
     comparison = {
         metric: {"TFT_base": results_base[metric], "TFT_IF": results_if[metric]}
@@ -171,9 +204,13 @@ def main():
             "epochs_ran_if": len(hist_if["train_loss"]),
             "num_features_base": Xtr_base.shape[-1],
             "num_features_if": Xtr_if.shape[-1],
+            "categorical_cardinalities": artifacts.categorical_cardinalities,
         },
+        "split_class_distribution": split_class_distribution,
         "results_TFT_base": results_base,
         "results_TFT_IF": results_if,
+        "results_val_TFT_base": val_results_base,
+        "results_val_TFT_IF": val_results_if,
         "comparison": comparison,
         "top10_feature_importance_TFT_IF": interp["feature_importance_ranked"][:10],
         "if_score_feature_rank": if_contribution,

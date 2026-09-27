@@ -60,4 +60,30 @@ def evaluate_model(model, X: np.ndarray, Y: np.ndarray, class_names=None):
         "confusion_matrix": confusion_matrix(y_true_flat, y_pred_flat, labels=labels).tolist(),
         "class_names": class_names,
     }
+
+    # Metrik per kelas (one-vs-rest) -- tabel pembahasan per kategori di skripsi.
+    p_c = precision_score(y_true_flat, y_pred_flat, labels=labels, average=None, zero_division=0)
+    r_c = recall_score(y_true_flat, y_pred_flat, labels=labels, average=None, zero_division=0)
+    f_c = f1_score(y_true_flat, y_pred_flat, labels=labels, average=None, zero_division=0)
+    supports = np.bincount(y_true_flat, minlength=len(labels))
+    results["per_class"] = {
+        name: {
+            "precision": float(p_c[i]), "recall": float(r_c[i]),
+            "f1": float(f_c[i]), "support": int(supports[i]),
+        }
+        for i, name in enumerate(class_names)
+    }
+
+    # Rincian per horizon t+1 .. t+T (metrik per langkah target, sebelum
+    # dirata-ratakan pada metrik flattened di atas).
+    T = Y.shape[1] if Y.ndim == 2 else 1
+    per_horizon = {}
+    for t in range(T):
+        yt, yp = Y[:, t], y_pred[:, t]
+        per_horizon[f"t+{t+1}"] = {
+            "accuracy": accuracy_score(yt, yp),
+            "f1_macro": f1_score(yt, yp, labels=labels, average="macro", zero_division=0),
+            "false_alarm_rate": _false_alarm_rate(yt, yp, normal_idx),
+        }
+    results["per_horizon"] = per_horizon
     return results

@@ -9,7 +9,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"
 ))
-from nids_tft_if.config import DATA
+from config import DATA
 
 rng = np.random.default_rng(42)
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "raw")
@@ -89,8 +89,14 @@ def make_file(n_rows: int, start_time: int, fname: str):
     # sisipkan duplikat sengaja
     dup_rows = df.sample(n=max(1, n_rows // 100), random_state=1)
     df = pd.concat([df, dup_rows], ignore_index=True)
-    # attack_cat kosong -> harus jadi Normal setelah preprocessing
-    empty_idx = rng.choice(len(df), size=max(1, len(df) // 200), replace=False)
+    # attack_cat kosong -> harus jadi Normal setelah preprocessing. Di
+    # UNSW-NB15 asli baris seperti ini selalu berlabel 0; pilih hanya baris
+    # label=0 agar konsisten dengan assertion di preprocessing.filter_classes.
+    normal_candidates = df.index[df["label"] == 0].to_numpy()
+    n_empty = max(1, len(df) // 200)
+    empty_idx = rng.choice(
+        normal_candidates, size=min(n_empty, len(normal_candidates)), replace=False
+    )
     df.loc[empty_idx, "attack_cat"] = np.nan
 
     # --- reproduksi bug asli: kolom numerik berisi string liar ---

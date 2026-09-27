@@ -3,12 +3,14 @@ tft_model.py
 Implementasi Temporal Fusion Transformer (Lim et al., 2021) dari nol,
 diadaptasi menjadi classification head (bukan quantile forecasting),
 mengikuti komponen pada Gambar 1 proposal:
-  - Variable Selection Network (VSN)
+  - Variable Selection Network (VSN) dengan *entity-style embedding* untuk
+    fitur kategorikal (Lim et al., 2021, Sec. 4.2)
   - Gated Residual Network (GRN), memakai GLU (Dauphin et al., 2017),
     ELU (Clevert et al., 2016), dan Layer Normalization (Ba et al., 2016)
   - LSTM encoder-decoder untuk dependensi lokal jangka pendek
-  - Interpretable (masked/causal) multi-head attention (Vaswani et al., 2017)
-    untuk dependensi jangka panjang
+  - Interpretable masked/causal multi-head attention (Lim et al., 2021,
+    Persamaan 13-16; dasar dari Vaswani et al., 2017): W_V di-share antar
+    head dan attention di-rata-rata antar head agar bisa dibaca langsung
   - Classification head (Linear + softmax) per titik waktu target T,
     menggantikan quantile output layer pada TFT asli, karena tugas di sini
     adalah klasifikasi multikelas (Normal/Generic/Exploits/Fuzzers), bukan
@@ -20,6 +22,8 @@ dipakai (proposal Bagian 5.4.2), karena keduanya tidak tersedia secara
 alami dalam konteks deteksi intrusi ini; seluruh input berupa observasi
 historis (past inputs) sepanjang jendela W.
 """
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,17 +73,29 @@ class GatedResidualNetwork(nn.Module):
 
 
 class VariableSelectionNetwork(nn.Module):
-    """VSN: memilih & membobot fitur secara adaptif per timestep, memakai
-    softmax atas GRN gabungan seluruh fitur (Lim et al., 2021)."""
-    def __init__(self, num_features: int, hidden_size: int, dropout: float = 0.1):
+    """VSN (Lim et al., 2021, Sec. 4.2 / Persamaan 6-8 proposal): memilih &
+    membobot fitur secara adaptif per timestep memakai softmax atas GRN
+    gabungan. Setiap fitur ditransformasi ke hidden_size lebih dulu:
+      - fitur kategorikal -> entity-style embedding (nn.Embedding per fitur,
+        kardinalitas dari preprocessing, termasuk token "unknown")
+        -- keputusan terkunci A13/2026-09-27, mengikuti paper asli;
+      - fitur kontinu -> transformasi linear(1 -> h)."""
+    def __init__(self, num_features: int, hidden_size: int, dropout: float = 0.1,
+                 categorical_features: dict = None):
         super().__init__()
         self.num_features = num_features
         self.hidden_size = hidden_size
+        self.categorical_features = dict(categorical_features or {})
 
-        # Setiap fitur skalar diproyeksikan ke hidden_size lebih dulu.
-        self.feature_linears = nn.ModuleList(
-            [nn.Linear(1, hidden_size) for _ in range(num_features)]
-        )
+        self.feature_encoders = nn.ModuleList()
+        for i in range(num_features):
+            if i in self.categorical_features:
+                self.feature_encoders.append(
+                    nn.Embedding(self.categorical_features[i], hidden_size)
+                )
+            else:
+                self.feature_encoders.append(nn.Linear(1, hidden_size))
+
         self.flattened_grn = GatedResidualNetwork(
             input_size=num_features * hidden_size,
             hidden_size=hidden_size,
@@ -94,7 +110,12 @@ class VariableSelectionNetwork(nn.Module):
     def forward(self, x):
         # x: (batch, time, num_features)
         b, t, f = x.shape
-        transformed = [self.feature_linears[i](x[..., i:i + 1]) for i in range(f)]  # list of (b,t,h)
+        transformed = []
+        for i, enc in enumerate(self.feature_encoders):
+            if i in self.categorical_features:
+                transformed.append(enc(x[..., i].long()))       # (b, t, h)
+            else:
+                transformed.append(enc(x[..., i:i + 1]))        # (b, t, h)
         stacked = torch.stack(transformed, dim=-2)  # (b, t, f, h)
         flattened = stacked.reshape(b, t, f * self.hidden_size)
 
@@ -109,6 +130,55 @@ class VariableSelectionNetwork(nn.Module):
         return combined, weights  # weights dipakai untuk interpretabilitas (Bagian 6.j)
 
 
+class InterpretableMultiHeadAttention(nn.Module):
+    """Interpretable multi-head attention (Lim et al., 2021, Persamaan 13-16;
+    keputusan terkunci A12/2026-09-27). Berbeda dari multi-head attention
+    standar (Vaswani et al., 2017), bobot value W_V DI-SHARE antar head
+    (Eq. 14) dan matriks attention di-rata-rata antar head (Eq. 15):
+
+        InterpretableMultiHead(Q, K, V) = H_tilde * W_H
+        H_tilde = attention(Q, K, V W_V) = Ã(Q, K) * V W_V
+        Ã(Q, K) = (1/H) * sum_h softmax( Q W_q^h (K W_k^h)^T / sqrt(d_attn) )
+
+    Karena rata-rata bersifat linear, mean_h(A_h @ V W_V) = mean_h(A_h) @ V W_V
+    persis, sehingga H_tilde di atas sama dengan Eq. 14/16. Hasilnya SATU
+    matriks attention (b, L, L) yang dapat dibaca langsung untuk analisis
+    temporal (proposal Bagian 6.j.iii). Mask aditif (0 / -inf) untuk causal
+    masking diterapkan sebelum softmax."""
+
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1):
+        super().__init__()
+        if embed_dim % num_heads != 0:
+            raise ValueError("embed_dim harus habis dibagi num_heads")
+        self.num_heads = num_heads
+        self.d_attn = embed_dim // num_heads
+        self.w_q = nn.ModuleList(
+            [nn.Linear(embed_dim, self.d_attn, bias=False) for _ in range(num_heads)]
+        )
+        self.w_k = nn.ModuleList(
+            [nn.Linear(embed_dim, self.d_attn, bias=False) for _ in range(num_heads)]
+        )
+        self.w_v = nn.Linear(embed_dim, self.d_attn, bias=False)  # di-share antar head
+        self.w_o = nn.Linear(self.d_attn, embed_dim, bias=False)  # W_H
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, query, key, value, attn_mask=None):
+        # query/key/value: (batch, L, embed_dim); attn_mask: (L, L) aditif 0/-inf
+        v_proj = self.w_v(value)  # (b, L, d_attn) -- sama untuk semua head (Eq. 14)
+        weights_sum = None
+        for h in range(self.num_heads):
+            scores = torch.matmul(self.w_q[h](query), self.w_k[h](key).transpose(-2, -1))
+            scores = scores / math.sqrt(self.d_attn)
+            if attn_mask is not None:
+                scores = scores + attn_mask
+            weights = torch.softmax(scores, dim=-1)
+            weights = self.dropout(weights)  # dropout pada prob. attention per-head
+            weights_sum = weights if weights_sum is None else weights_sum + weights
+        avg_weights = weights_sum / self.num_heads          # Ã(Q, K) -- (b, L, L)
+        out = self.w_o(torch.matmul(avg_weights, v_proj))   # H_tilde W_H -- (b, L, embed_dim)
+        return out, avg_weights
+
+
 class TemporalFusionTransformer(nn.Module):
     """TFT untuk klasifikasi temporal multikelas horizon-pendek.
 
@@ -116,12 +186,15 @@ class TemporalFusionTransformer(nn.Module):
     Output: (batch, T, num_classes)   -- probabilitas kelas per titik target
     """
     def __init__(self, num_features: int, hidden_size: int = 64, num_classes: int = 4,
-                 T: int = 3, lstm_layers: int = 1, attn_heads: int = 4, dropout: float = 0.1):
+                 T: int = 3, lstm_layers: int = 1, attn_heads: int = 4, dropout: float = 0.1,
+                 categorical_features: dict = None):
         super().__init__()
         self.T = T
         self.hidden_size = hidden_size
 
-        self.vsn = VariableSelectionNetwork(num_features, hidden_size, dropout)
+        self.vsn = VariableSelectionNetwork(
+            num_features, hidden_size, dropout, categorical_features
+        )
 
         self.lstm_encoder = nn.LSTM(
             hidden_size, hidden_size, num_layers=lstm_layers, batch_first=True
@@ -138,8 +211,8 @@ class TemporalFusionTransformer(nn.Module):
 
         self.static_enrichment_grn = GatedResidualNetwork(hidden_size, hidden_size, hidden_size, dropout)
 
-        self.attention = nn.MultiheadAttention(
-            embed_dim=hidden_size, num_heads=attn_heads, dropout=dropout, batch_first=True
+        self.attention = InterpretableMultiHeadAttention(
+            embed_dim=hidden_size, num_heads=attn_heads, dropout=dropout
         )
         self.post_attn_gate = GLU(hidden_size, hidden_size)
         self.post_attn_norm = nn.LayerNorm(hidden_size)
@@ -182,10 +255,9 @@ class TemporalFusionTransformer(nn.Module):
         )
 
         attn_out, attn_weights = self.attention(
-            enriched, enriched, enriched, attn_mask=causal_mask, need_weights=True,
-            average_attn_weights=True,
+            enriched, enriched, enriched, attn_mask=causal_mask
         )
-        self._last_attn_weights = attn_weights.detach()  # (b, seq_len, seq_len)
+        self._last_attn_weights = attn_weights.detach()  # Ã: (b, seq_len, seq_len)
 
         gated_attn = self.post_attn_gate(attn_out)
         gated_attn = self.post_attn_norm(enriched + gated_attn)

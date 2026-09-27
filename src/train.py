@@ -64,6 +64,7 @@ def compute_weights(Y_train: np.ndarray, num_classes: int) -> torch.Tensor:
 def train_model(
     X_train, Y_train, X_val, Y_val, num_features: int,
     model_cfg=MODEL, train_cfg=TRAIN, use_class_weighting: bool = True,
+    categorical_features: dict = None,
     verbose: bool = True, desc: str = "model", show_progress: bool = True,
 ):
     torch.manual_seed(train_cfg.seed)
@@ -77,6 +78,7 @@ def train_model(
         lstm_layers=model_cfg.lstm_layers,
         attn_heads=model_cfg.attn_heads,
         dropout=model_cfg.dropout,
+        categorical_features=categorical_features,
     ).to(device)
 
     class_weights = None

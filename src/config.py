@@ -43,7 +43,7 @@ class PreprocConfig:
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_ratio: float = 0.15
-    fillna_strategy: str = "median"  # imputasi null numerik
+    # Imputasi null numerik selalu median & fit-on-train (impute_missing).
 
 
 @dataclass

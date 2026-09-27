@@ -5,8 +5,10 @@ Tahap praproses sesuai Bagian 6.d proposal:
   2. Cleaning null/inf/duplikat
   3. Sort kronologis (stime)
   4. Split kronologis train/val/test TANPA shuffle
-  5. Encoding kategorikal (fit hanya di train)
-  6. Min-Max scaling (fit hanya di train)
+  5. Imputasi median numerik (fit hanya di train, keputusan A8)
+  6. Encoding kategorikal + token "unknown" eksplisit (fit hanya di train);
+     kategorikal disimpan sebagai kode integer mentah (indeks embedding)
+  7. Min-Max scaling fitur kontinu (fit hanya di train)
 Semua parameter preprocessing (encoder, scaler) hanya di-fit pada data latih
 untuk mencegah data leakage (proposal Bagian 6.d.vii).
 """
@@ -30,6 +32,10 @@ class PreprocArtifacts:
     scaler: MinMaxScaler
     feature_cols: list
     label_encoder: LabelEncoder  # untuk attack_cat -> int
+    # Kardinalitas per fitur kategorikal (sudah termasuk token "unknown") dan
+    # peta indeks fitur -> kardinalitas, dipakai untuk nn.Embedding di VSN.
+    categorical_cardinalities: Dict[str, int] = None
+    categorical_feature_indices: Dict[int, int] = None
 
 
 def coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -39,7 +45,7 @@ def coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
     sehingga pandas membaca seluruh kolom sebagai object/string. Fungsi ini
     memaksa kolom-kolom non-kategorikal & non-target menjadi numerik;
     nilai yang tidak bisa dikonversi (mis. ' ', '-', string hex) menjadi
-    NaN dan akan diimputasi di clean_data()."""
+    NaN dan akan diimputasi di impute_missing() setelah split."""
     df = df.copy()
     for c in df.columns:
         if c in _NON_NUMERIC_COLS:
@@ -66,6 +72,19 @@ def normalize_string_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def filter_classes(df: pd.DataFrame) -> pd.DataFrame:
     df = normalize_string_columns(df)
+    # Assertion (spec D8/A10): baris dengan attack_cat kosong diasumsikan Normal
+    # (pola yang dikenal di UNSW-NB15: label=0). Bila ada yang berlabel serangan,
+    # asumsi itu gagal — hentikan agar tidak salah label diam-diam.
+    if DATA.binary_label_col in df.columns:
+        missing_cat = df[DATA.target_col].isin(["nan", "", "None"])
+        lab = pd.to_numeric(df[DATA.binary_label_col], errors="coerce")
+        inconsistent = int((missing_cat & (lab == 1)).sum())
+        if inconsistent:
+            raise ValueError(
+                f"{inconsistent} baris memiliki attack_cat kosong tetapi label=1; "
+                "asumsi 'attack_cat kosong = Normal' tidak berlaku untuk data ini. "
+                "Periksa data mentah sebelum lanjut."
+            )
     df[DATA.target_col] = df[DATA.target_col].replace(
         {"nan": "Normal", "": "Normal", "None": "Normal"}
     )
@@ -85,14 +104,9 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df = coerce_numeric_columns(df)
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    # inf -> nan lalu imputasi
+    # inf -> NaN. Imputasi numerik TIDAK di sini: dipindah ke impute_missing()
+    # yang fit-on-train setelah split (keputusan A8, konsisten proposal 6.d.vii).
     df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
-    if PREPROC.fillna_strategy == "median":
-        for c in numeric_cols:
-            if df[c].isna().any():
-                df[c] = df[c].fillna(df[c].median())
-    else:
-        df[numeric_cols] = df[numeric_cols].fillna(0)
 
     non_numeric_cols = [c for c in df.columns if c not in numeric_cols]
     for c in non_numeric_cols:
@@ -127,6 +141,24 @@ def chronological_split(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, p
     return train_df, val_df, test_df
 
 
+def impute_missing(
+    train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Imputasi median FIT HANYA PADA DATA LATIH (proposal 6.d.ii & vii;
+    keputusan A8/2026-09-27): median per kolom numerik dihitung dari train,
+    lalu diterapkan ke train/val/test. Kolom yang seluruhnya NaN di train
+    (tidak seharusnya terjadi) diisi 0."""
+    train_df, val_df, test_df = train_df.copy(), val_df.copy(), test_df.copy()
+    numeric_cols = train_df.select_dtypes(include=[np.number]).columns.tolist()
+    medians = train_df[numeric_cols].median()
+    for d in (train_df, val_df, test_df):
+        for c in numeric_cols:
+            if d[c].isna().any():
+                fill = medians[c] if pd.notna(medians[c]) else 0.0
+                d[c] = d[c].fillna(fill)
+    return train_df, val_df, test_df
+
+
 def encode_and_scale(
     train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, PreprocArtifacts]:
@@ -143,18 +175,23 @@ def encode_and_scale(
             if c in d.columns:
                 d.drop(columns=c, inplace=True)
 
-    # Encode kategorikal, fit hanya di train
+    # Encode kategorikal, fit hanya di train. Token "unknown" eksplisit
+    # (keputusan A9/2026-09-27): kategori di val/test yang tak ada di train
+    # dipetakan ke token ini (bukan ke kelas arbitrer), sehingga embedding
+    # punya indeks khusus untuk unseen.
     encoders = {}
+    categorical_cardinalities: Dict[str, int] = {}
     for c in DATA.categorical_cols:
         if c not in train_df.columns:
             continue
         le = LabelEncoder()
-        le.fit(train_df[c].astype(str))
+        le.fit(list(pd.unique(train_df[c].astype(str))) + ["unknown"])
         encoders[c] = le
+        known = set(le.classes_)
         for d in [train_df, val_df, test_df]:
-            known = set(le.classes_)
-            d[c] = d[c].astype(str).apply(lambda v: v if v in known else le.classes_[0])
-            d[c] = le.transform(d[c])
+            vals = d[c].astype(str)
+            d[c] = le.transform(vals.where(vals.isin(known), "unknown"))
+        categorical_cardinalities[c] = len(le.classes_)
 
     # Encode target attack_cat -> integer sesuai urutan DATA.classes_used
     label_encoder = LabelEncoder()
@@ -167,14 +204,30 @@ def encode_and_scale(
         if c not in (DATA.target_col, DATA.source_file_col)
     ]
 
+    # Min-Max hanya pada fitur KONTINU. Kolom kategorikal sengaja dikeluarkan:
+    # nilainya kode integer mentah 0..K-1 yang dibaca langsung sebagai indeks
+    # embedding di VSN; bila ikut di-scale, round-off float32 pada k/(K-1)
+    # bisa memotong .long() ke indeks yang salah (bug diam-diam).
+    cat_cols_present = [c for c in DATA.categorical_cols if c in feature_cols]
+    continuous_cols = [c for c in feature_cols if c not in cat_cols_present]
+
     scaler = MinMaxScaler()
-    scaler.fit(train_df[feature_cols])
+    scaler.fit(train_df[continuous_cols])
     for d in [train_df, val_df, test_df]:
-        d[feature_cols] = scaler.transform(d[feature_cols])
+        d[continuous_cols] = scaler.transform(d[continuous_cols])
+        for c in cat_cols_present:
+            d[c] = d[c].astype(np.int64)
+
+    categorical_feature_indices = {
+        feature_cols.index(c): categorical_cardinalities[c]
+        for c in DATA.categorical_cols if c in categorical_cardinalities
+    }
 
     artifacts = PreprocArtifacts(
         encoders=encoders, scaler=scaler, feature_cols=feature_cols,
         label_encoder=label_encoder,
+        categorical_cardinalities=categorical_cardinalities,
+        categorical_feature_indices=categorical_feature_indices,
     )
     return train_df, val_df, test_df, artifacts
 
@@ -184,5 +237,6 @@ def run_preprocessing(raw_df: pd.DataFrame):
     df = clean_data(df)
     df = sort_chronologically(df)
     train_df, val_df, test_df = chronological_split(df)
+    train_df, val_df, test_df = impute_missing(train_df, val_df, test_df)
     train_df, val_df, test_df, artifacts = encode_and_scale(train_df, val_df, test_df)
     return train_df, val_df, test_df, artifacts
