@@ -48,11 +48,11 @@ Thumbs.db
 # ==========================
 
 # Model checkpoints & artefak run (regenerable; hasil run dummy menyesatkan)
-checkpoints/
-logs/
-*.pt
-*.pth
-*.ckpt
+# checkpoints/
+# logs/
+# *.pt
+# *.pth
+# *.ckpt
 
 # Handoff documentation
 # handoff.md

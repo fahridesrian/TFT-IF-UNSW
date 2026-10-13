@@ -39,6 +39,13 @@ def make_loader(X: np.ndarray, Y: np.ndarray, batch_size: int, shuffle: bool,
     num_workers = TRAIN.num_workers if num_workers is None else num_workers
     X_t = torch.from_numpy(X).float()
     Y_t = torch.from_numpy(Y).long()
+    # Windows memakai spawn: tiap worker menerima dataset lewat pickle dan
+    # tanpa ini memegang SALINAN penuh (train ~2,4 GB × 6 worker + val × 6
+    # worker ≈ 17 GB → MemoryError saat latih model kedua, ketika array
+    # base+IF dua-duanya ada di RAM). share_memory_ membuat worker memetakan
+    # memori yang sama tanpa menyalin. workers=6 spec §6 tetap dipenuhi.
+    X_t.share_memory_()
+    Y_t.share_memory_()
     ds = TensorDataset(X_t, Y_t)
     return DataLoader(
         ds,

@@ -149,6 +149,9 @@ def main():
         desc="TFT-base", show_progress=verbose,
         categorical_features=cat_features,
     )
+    # Simpan langsung (bukan menunggu TFT-IF selesai): kalau run crash di
+    # tengah jalan, 17+ epoch TFT-base tidak hilang sia-sia.
+    torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_base.pt"))
 
     if verbose:
         print("[6/8] Melatih TFT-IF ...")
@@ -159,7 +162,6 @@ def main():
         categorical_features=cat_features,
     )
 
-    torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_base.pt"))
     torch.save(model_if.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_if.pt"))
 
     # 7. Evaluasi & bandingkan (Bagian 6.i)
