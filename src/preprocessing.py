@@ -76,7 +76,9 @@ def filter_classes(df: pd.DataFrame) -> pd.DataFrame:
     # (pola yang dikenal di UNSW-NB15: label=0). Bila ada yang berlabel serangan,
     # asumsi itu gagal — hentikan agar tidak salah label diam-diam.
     if DATA.binary_label_col in df.columns:
-        missing_cat = df[DATA.target_col].isin(["nan", "", "None"])
+        # pandas 3: astype(str) mempertahankan NaN, jadi NaN harus dicek
+        # eksplisit (isin(["nan", ...]) saja tidak akan pernah cocok).
+        missing_cat = df[DATA.target_col].isna() | df[DATA.target_col].isin(["nan", "", "None"])
         lab = pd.to_numeric(df[DATA.binary_label_col], errors="coerce")
         inconsistent = int((missing_cat & (lab == 1)).sum())
         if inconsistent:
@@ -120,24 +122,25 @@ def sort_chronologically(df: pd.DataFrame) -> pd.DataFrame:
     sort_col = DATA.time_cols[0] if DATA.time_cols[0] in df.columns else None
     if sort_col is None:
         return df.reset_index(drop=True)
-    df = df.sort_values(by=[DATA.source_file_col, sort_col]).reset_index(drop=True)
+    # Satu urutan global (keputusan A2, 6 Okt 2026): waktu dulu, lalu berkas
+    # sebagai pemecah seri. kind="stable" menjaga urutan asal baris bila
+    # stime dan berkas sama (deterministik antar-run).
+    df = df.sort_values(
+        by=[sort_col, DATA.source_file_col], kind="stable"
+    ).reset_index(drop=True)
     return df
 
 
 def chronological_split(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split per source_file secara kronologis agar proporsi tiap file terjaga
-    dan tidak ada leakage antar waktu (proposal Bagian 6.d.iv)."""
-    train_parts, val_parts, test_parts = [], [], []
-    for _, g in df.groupby(DATA.source_file_col, sort=False):
-        n = len(g)
-        n_train = int(n * PREPROC.train_ratio)
-        n_val = int(n * PREPROC.val_ratio)
-        train_parts.append(g.iloc[:n_train])
-        val_parts.append(g.iloc[n_train:n_train + n_val])
-        test_parts.append(g.iloc[n_train + n_val:])
-    train_df = pd.concat(train_parts).reset_index(drop=True)
-    val_df = pd.concat(val_parts).reset_index(drop=True)
-    test_df = pd.concat(test_parts).reset_index(drop=True)
+    """Split GLOBAL kronologis (keputusan A2, 6 Okt 2026): df sudah terurut
+    waktu lintas semua berkas; potong sekali 70/15/15 awal-tengah-akhir tanpa
+    shuffle, sehingga data uji adalah periode paling akhir (proposal 6.d.iv)."""
+    n = len(df)
+    n_train = int(n * PREPROC.train_ratio)
+    n_val = int(n * PREPROC.val_ratio)
+    train_df = df.iloc[:n_train].reset_index(drop=True)
+    val_df = df.iloc[n_train:n_train + n_val].reset_index(drop=True)
+    test_df = df.iloc[n_train + n_val:].reset_index(drop=True)
     return train_df, val_df, test_df
 
 
@@ -194,10 +197,17 @@ def encode_and_scale(
         categorical_cardinalities[c] = len(le.classes_)
 
     # Encode target attack_cat -> integer sesuai urutan DATA.classes_used
+    # (Normal=0, Generic=1, Exploits=2, Fuzzers=3). LabelEncoder.fit()
+    # mengurutkan ALFABET, jadi urutannya ditetapkan eksplisit di sini.
     label_encoder = LabelEncoder()
-    label_encoder.fit(list(DATA.classes_used))
+    label_encoder.classes_ = np.array(list(DATA.classes_used))
+    assert list(label_encoder.classes_) == list(DATA.classes_used)
+    # Pemetaan lewat kamus (bukan transform): transform() bisa memakai
+    # searchsorted yang mengasumsikan classes_ terurut alfabet.
+    class_to_idx = {c: i for i, c in enumerate(DATA.classes_used)}
     for d in [train_df, val_df, test_df]:
-        d[DATA.target_col] = label_encoder.transform(d[DATA.target_col])
+        d[DATA.target_col] = d[DATA.target_col].map(class_to_idx).astype(np.int64)
+        assert not d[DATA.target_col].isna().any()
 
     feature_cols = [
         c for c in train_df.columns

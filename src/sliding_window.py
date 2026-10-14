@@ -77,3 +77,27 @@ def build_windows(
         np.concatenate(all_X, axis=0).astype(np.float32, copy=False),
         np.concatenate(all_Y, axis=0).astype(np.int64, copy=False),
     )
+
+
+def build_last_labels(
+    df_with_source: pd.DataFrame, target_col: str = None,
+    W: int = None, T: int = None, stride: int = None,
+) -> np.ndarray:
+    """Label rekaman TERAKHIR di jendela historis tiap window, urutan sama
+    dengan build_windows. Dipakai hanya untuk acuan persistensi (A16); model
+    tidak pernah melihat label ini."""
+    target_col = target_col or DATA.target_col
+    W = W or WINDOW.W
+    T = T or WINDOW.T
+    stride = stride or WINDOW.stride
+    out = []
+    for _, seg in df_with_source.groupby(DATA.source_file_col, sort=False):
+        n = len(seg)
+        if n < W + T:
+            continue
+        y = seg[target_col].to_numpy()
+        starts = np.arange(0, n - W - T + 1, stride)
+        out.append(y[starts + W - 1])
+    if not out:
+        return np.empty((0,), dtype=np.int64)
+    return np.concatenate(out).astype(np.int64, copy=False)

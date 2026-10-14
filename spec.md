@@ -3,8 +3,10 @@
 > **Status**: **v1.2 (2026-10-14)** — v1.1 (keputusan terkunci 2026-09-27, A1–A14,
 > lolos smoke test) + revisi Okt 2026: split global (A2), grid (W,T) pada kedua
 > model (A3/A6), empat kelas (A15), persistensi (A16), batch 4096 (A17).
-> **Revisi A2/A3/A16 belum diterapkan di kode** dan ada **bug pemetaan label**
-> (lihat §2.2 butir 6 dan §14); hasil training 13 Okt belum dapat dipakai di skripsi.
+> Revisi A2/A3/A16, perbaikan pemetaan label, dan perbaikan A10 sudah
+> diterapkan di kode (commit sesudah 1f16f37; diuji dengan data tiruan, belum
+> dengan data asli). Hasil training 13 Okt (sebelum perbaikan) tidak dapat
+> dipakai di skripsi (lihat §14); jalankan ulang.
 > Dokumen ini mendokumentasikan sistem persis seperti di `src/`, dipetakan ke
 > proposal (Bagian 5–6) dan paper sumber, **termasuk pembelaan (justifikasi
 > skripsi) untuk setiap keputusan**.
@@ -68,9 +70,10 @@ data uji sehingga uji bercampur dari beberapa periode dan tidak mencerminkan
 "masa depan" sesungguhnya; pembagian global menjaga satu garis waktu dan
 mencegah kebocoran antar periode. Konsekuensi: data uji berasal dari periode
 paling akhir (berkas ke-4), sehingga distribusi kelas antarsplit berbeda;
-laporkan `split_class_distribution`. **Status kode (14 Okt 2026): belum
-diterapkan** — `chronological_split` dan `sort_chronologically` masih per
-berkas; hasil training 13 Okt memakai pembagian per berkas.
+laporkan `split_class_distribution`. **Status kode: diterapkan**
+(`sort_chronologically` stabil `[stime, source_file]`, `chronological_split`
+global; uji: `tests/test_split_and_labels.py`). Hasil training 13 Okt memakai
+pembagian per berkas.
 
 **Pembelaan**: angka yang tertulis di proposal; dengan ±2,54 juta baris, 15%
 test ≈ 381 ribu window — jauh di atas ukuran minimum untuk estimasi metrik
@@ -84,9 +87,10 @@ Selektor = **F1-macro validasi** (`results_val_TFT_*.f1_macro`). Setiap model
 mengambil (W,T) terbaiknya sendiri; selain itu dilaporkan perbandingan pada
 (W,T) yang sama agar selisih tidak tercampur pengaruh pemilihan. Data uji tidak
 dipakai memilih. Hasil disimpan **per kombinasi** (nama berkas memuat model, W,
-T). Default sampai grid selesai: W=10, T=3. **Status kode: belum diterapkan**
-(hanya override CLI `--window/--horizon`; run 13 Okt memakai W=10, T=3 tanpa
-grid). Catatan: T berbeda mengubah tugas prediksi; bandingkan antarmodel hanya
+T). Default sampai grid selesai: W=10, T=3. **Status kode: diterapkan**
+(`run_grid.py` menjalankan `main.py --window W --horizon T --seed S`; hasil
+per kombinasi di `logs/results_summary_W{W}_T{T}_seed{S}.json`; run 13 Okt
+memakai W=10, T=3 tanpa grid). Catatan: T berbeda mengubah tugas prediksi; bandingkan antarmodel hanya
 pada T yang sama bila membandingkan metrik secara langsung.
 
 **Anchor literatur**: **Psychogyios et al. 2024** (Future Internet 16(3):73) —
@@ -243,7 +247,7 @@ Prediksi "kelas rekaman berikutnya = kelas rekaman terakhir" memakai **label
 sebenarnya** yang tidak dimiliki model (model hanya melihat fitur lalu
 lintas), sehingga hanya **satu baris acuan** pada tabel hasil, bukan pesaing.
 Hitung pada jendela yang sama dengan data uji (setelah deduplikasi). Tambahkan
-juga acuan "selalu Normal". **Status kode: belum ada di `evaluate.py`.**
+juga acuan "selalu Normal". **Status kode: diterapkan** (`evaluate.baseline_predictions`, `sliding_window.build_last_labels`; kunci `baselines` pada JSON hasil, untuk test dan val).
 Hitungan awal (pra-deduplikasi): pembagian global acc 92,80% / F1 macro 0,5805;
 per berkas acc 94,64% / F1 macro 0,6170 — harus dihitung ulang.
 
@@ -262,16 +266,15 @@ menjadi **fitur tambahan ke-(F+1)**. Dua model dilatih dan dibandingkan:
 ```
 data_loading (headerless 49 kolom, fallback names=config)
   → eda.py (6.c, terpisah, → logs/eda/)
-  → preprocessing: filter(+assertion)→clean→sort→split 70:15:15 (global, A2*)
+  → preprocessing: filter(+assertion)→clean→sort→split 70:15:15 (global, A2)
       → impute (median, fit train) → encode (+unknown) → scale kontinu
   → isolation_forest_module: fit Normal-train → s(x,n) literal → fitur +1
   → sliding_window (per segmen, per split)  [dua versi: tanpa & dengan if_score]
-  → [opsional: Optuna tuning pada TFT-IF] / grid (W,T) pada kedua model (A3*)
+  → [opsional: Optuna tuning pada TFT-IF] / grid (W,T) pada kedua model (A3)
   → train TFT-base & TFT-IF (hyperparameter identik)
-  → evaluate test + val (flatten N·T, per kelas, per horizon) + acuan persistensi (A16*)
+  → evaluate test + val (flatten N·T, per kelas, per horizon) + acuan persistensi (A16)
   → interpret (VSN + attention Ã) → logs/results_summary.json + checkpoints
 ```
-(* = diputuskan, belum diterapkan di kode per 14 Okt 2026.)
 
 ## 2. Data & Praproses (`data_loading.py`, `preprocessing.py`)
 
@@ -295,11 +298,10 @@ data_loading (headerless 49 kolom, fallback names=config)
    (`pd.to_numeric`; hex port/spasi → NaN); ±inf → NaN; kategorikal kosong →
    `"unknown"`; `drop_duplicates()` penuh (**sengaja pre-split** — lihat §0.8).
    NaN numerik **tidak diisi di sini**.
-3. **Sort kronologis**: target (A2): `sort_values([stime, source_file])` stabil,
-   satu urutan global. Kode saat ini: `[source_file, stime]`.
-4. **Split kronologis** (`chronological_split`): target (A2): 70/15/15 awal-
-   tengah-akhir pada urutan **global**, **tanpa shuffle**. Kode saat ini masih
-   per `source_file` (belum diubah).
+3. **Sort kronologis**: `sort_values([stime, source_file], kind="stable")`,
+   satu urutan global (A2).
+4. **Split kronologis** (`chronological_split`): 70/15/15 awal-tengah-akhir
+   pada urutan **global**, **tanpa shuffle** (A2).
 5. **Imputasi** (`impute_missing`): median **fit-on-train** (A8).
 6. **Encoding & scaling** (`encode_and_scale`): drop 4 id + 2 waktu + `label`;
    `source_file` dipertahankan di dataframe (di luar `feature_cols`).
@@ -307,12 +309,12 @@ data_loading (headerless 49 kolom, fallback names=config)
      integer mentah dipertahankan (tanpa scaler) — indeks embedding (A13);
      `categorical_cardinalities` & `categorical_feature_indices` diekspos di
      `PreprocArtifacts`.
-   - Target: **pemetaan yang dimaksud** Normal=0, Generic=1, Exploits=2,
-     Fuzzers=3 (urutan `classes_used`). **BUG di kode (14 Okt 2026)**:
-     `LabelEncoder.fit(classes_used)` mengurutkan alfabet → Exploits=0,
-     Fuzzers=1, Generic=2, Normal=3, sehingga nama kelas dan FAR pada
-     `results_summary.json` bergeser. Perbaikan: set `classes_` eksplisit
-     atau kamus nama→indeks, plus assert urutan.
+   - Target: Normal=0, Generic=1, Exploits=2, Fuzzers=3 (urutan
+     `classes_used`), lewat kamus nama→indeks. **Bug sebelumnya**:
+     `LabelEncoder.fit(classes_used)` mengurutkan alfabet (Exploits=0,
+     Fuzzers=1, Generic=2, Normal=3), sehingga nama kelas dan FAR pada
+     `results_summary.json` 13 Okt bergeser. Sudah diperbaiki; uji:
+     `tests/test_split_and_labels.py`.
    - `MinMaxScaler` **fit hanya train, hanya fitur kontinu**; `if_score`
      (ditambah setelah tahap ini) tidak di-scale — sudah di (0,1) (A11).
 - **`feature_cols` = 41** (49−2 target−4 id−2 waktu); TFT-IF: +`if_score` = 42.
@@ -431,7 +433,7 @@ Konstrain `h % heads == 0` (dijaga tuner; berlaku untuk
 | DATA | csv_files, columns | 4 file; 49 kolom (headerless — A7) |
 | DATA | id_cols_to_drop | `srcip, sport, dstip, dsport` (A1) |
 | DATA | categorical / time / target / label | `proto, state, service` / `stime, ltime` / `attack_cat` / `label` |
-| PREPROC | rasio split | 0.70/0.15/0.15 kronologis global (A2; kode masih per file) |
+| PREPROC | rasio split | 0.70/0.15/0.15 kronologis global (A2) |
 | IF | n_estimators, max_samples, contamination, seed | 100; "auto"(256); "auto"; 42 |
 | WINDOW | W, T, stride | 10; 3; 1 (**default awal — final dari grid A3**) |
 | MODEL | hidden_size, lstm_layers, attn_heads, dropout, classes | 64; 1; 4; 0.1; 4 |
@@ -455,8 +457,8 @@ Konstrain `h % heads == 0` (dijaga tuner; berlaku untuk
 
 ## 12. Keputusan Tersisa (tidak memblokir run pertama)
 
-1. **Eksekusi grid W/T** (A3) pada kedua model — 6 kombinasi × 2 model; kode
-   perlu diperluas (lihat §14). Jalankan di PC RTX 3060 (bukan laptop RTX 3050).
+1. **Eksekusi grid W/T** (A3) pada kedua model — `python run_grid.py` (6
+   kombinasi, tiap kombinasi melatih kedua model). Jalankan di PC RTX 3060 (bukan laptop RTX 3050).
 2. **Sensitivitas 80:10:10** — opsional (A2).
 3. **Oversampling/undersampling pembanding** (proposal 6.e.iii) — class
    weighting terkunci sebagai strategi utama (A4); comparator SMOTE/dkk.
@@ -500,8 +502,9 @@ Run: pembagian per berkas, W=10, T=3, batch 4096, tanpa grid. Sumber:
   peringkat `if_score` 28 dari 42). Penyebab belum diuji: variasi seed, AUC
   `if_score` per kelas, pergeseran distribusi skor latih→uji, pengaruh
   pembobotan `balanced` (bobot serangan ±100× Normal).
-- Pekerjaan kode tersisa: perbaiki pemetaan label; split global + sort stabil;
-  grid (W,T) pada kedua model dengan hasil per kombinasi; acuan persistensi dan
-  "selalu Normal" di `evaluate.py`; perbaiki assertion A10 pada pandas 3
-  (`astype(str)` mempertahankan NaN → gunakan `isna() | isin([...])`); catat
-  bahwa fitur kategorikal masuk IF sebagai kode integer mentah.
+- Sudah diperbaiki di kode: pemetaan label; split global + sort stabil; grid
+  (`run_grid.py`) dengan hasil per kombinasi dan `--seed`; acuan persistensi dan
+  "selalu Normal"; assertion A10 pada pandas 3 (`isna() | isin([...])`).
+- Masih terbuka: fitur kategorikal masuk Isolation Forest sebagai kode integer
+  mentah (catat di skripsi); perlakuan jeda 624 jam pada berkas ke-2 terhadap
+  jendela; seed hanya mengubah pelatihan model (Isolation Forest tetap seed 42).

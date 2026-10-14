@@ -40,10 +40,26 @@ def _false_alarm_rate(y_true_flat, y_pred_flat, normal_idx: int) -> float:
 
 
 def evaluate_model(model, X: np.ndarray, Y: np.ndarray, class_names=None):
+    y_pred = predict(model, X)  # (N, T)
+    return evaluate_predictions(y_pred, Y, class_names)
+
+
+def baseline_predictions(Y: np.ndarray, last_labels: np.ndarray, kind: str,
+                         class_names=None) -> np.ndarray:
+    """Acuan sederhana (A16), BUKAN pesaing model: keduanya memakai informasi
+    yang tidak dimiliki model. 'persistence' = label rekaman terakhir di
+    jendela historis untuk semua T langkah; 'always_normal' = selalu Normal."""
+    class_names = class_names or list(DATA.classes_used)
+    if kind == "persistence":
+        return np.repeat(last_labels[:, None], Y.shape[1], axis=1)
+    if kind == "always_normal":
+        return np.full(Y.shape, class_names.index("Normal"), dtype=np.int64)
+    raise ValueError(kind)
+
+
+def evaluate_predictions(y_pred: np.ndarray, Y: np.ndarray, class_names=None):
     class_names = class_names or list(DATA.classes_used)
     normal_idx = class_names.index("Normal")
-
-    y_pred = predict(model, X)  # (N, T)
     y_true_flat = Y.reshape(-1)
     y_pred_flat = y_pred.reshape(-1)
 

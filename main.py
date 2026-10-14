@@ -28,9 +28,9 @@ from config import DATA, WINDOW, MODEL, TRAIN, PATHS
 from data_loading import load_unsw_nb15
 from preprocessing import run_preprocessing
 from isolation_forest_module import integrate_isolation_forest
-from sliding_window import build_windows
+from sliding_window import build_windows, build_last_labels
 from train import train_model
-from evaluate import evaluate_model
+from evaluate import evaluate_model, baseline_predictions, evaluate_predictions
 from interpret import extract_interpretation, summarize_if_contribution
 from hyperparameter_tuning import run_tuning
 
@@ -45,6 +45,12 @@ def parse_args():
                    help="Override WINDOW.W (untuk ablasi W/T, proposal 6.g.v)")
     p.add_argument("--horizon", type=int, default=None,
                    help="Override WINDOW.T (untuk ablasi W/T, proposal 6.g.v)")
+    p.add_argument("--seed", type=int, default=None,
+                   help="Seed pelatihan model (A: >=3 seed pada (W,T) terbaik)")
+    p.add_argument("--tag", type=str, default=None,
+                   help="Akhiran nama berkas hasil/checkpoint. Default: bila "
+                        "--window/--horizon/--seed diberikan, dibentuk otomatis "
+                        "(W{W}_T{T}_seed{S}) agar hasil tiap kombinasi tidak tertimpa")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args()
 
@@ -58,6 +64,8 @@ def main():
     train_cfg = copy.deepcopy(TRAIN)
     if args.epochs:
         train_cfg.epochs = args.epochs
+    if args.seed is not None:
+        train_cfg.seed = args.seed
     # Override W/T untuk ablasi tanpa menyentuh config.py (WINDOW adalah
     # singleton config yang juga dibaca sliding_window.build_windows).
     if args.window:
@@ -66,6 +74,17 @@ def main():
         WINDOW.T = args.horizon
     if verbose and (args.window or args.horizon):
         print(f"    Override window: W={WINDOW.W}, T={WINDOW.T}")
+
+    # Nama berkas hasil per kombinasi (A3): tanpa argumen -> nama lama.
+    tag = args.tag
+    if tag is None and (args.window or args.horizon or args.seed is not None):
+        tag = f"W{WINDOW.W}_T{WINDOW.T}_seed{train_cfg.seed}"
+    results_file = PATHS.results_file
+    ckpt_suffix = ""
+    if tag:
+        base, ext = os.path.splitext(PATHS.results_file)
+        results_file = f"{base}_{tag}{ext}"
+        ckpt_suffix = f"_{tag}"
 
     # 1. Load data (Bagian 6.b)
     if verbose:
@@ -151,7 +170,7 @@ def main():
     )
     # Simpan langsung (bukan menunggu TFT-IF selesai): kalau run crash di
     # tengah jalan, 17+ epoch TFT-base tidak hilang sia-sia.
-    torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_base.pt"))
+    torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, f"tft_base{ckpt_suffix}.pt"))
 
     if verbose:
         print("[6/8] Melatih TFT-IF ...")
@@ -162,7 +181,7 @@ def main():
         categorical_features=cat_features,
     )
 
-    torch.save(model_if.state_dict(), os.path.join(PATHS.checkpoints_dir, "tft_if.pt"))
+    torch.save(model_if.state_dict(), os.path.join(PATHS.checkpoints_dir, f"tft_if{ckpt_suffix}.pt"))
 
     # 7. Evaluasi & bandingkan (Bagian 6.i)
     if verbose:
@@ -175,6 +194,17 @@ def main():
     val_results_base = evaluate_model(model_base, Xval_base, Yval)
     val_results_if = evaluate_model(model_if, Xval_if, Yval_if)
 
+    # Acuan A16 (satu baris referensi, bukan pesaing): persistensi memakai
+    # label rekaman terakhir (tidak dimiliki model); "selalu Normal".
+    baselines = {}
+    for split_name, split_df, Y_split in [("test", test_df, Yte), ("val", val_df, Yval)]:
+        last = build_last_labels(split_df)
+        assert len(last) == len(Y_split)
+        for kind in ("persistence", "always_normal"):
+            baselines[f"{kind}_{split_name}"] = evaluate_predictions(
+                baseline_predictions(Y_split, last, kind), Y_split
+            )
+
     comparison = {
         metric: {"TFT_base": results_base[metric], "TFT_IF": results_if[metric]}
         for metric in ["accuracy", "precision_macro", "recall_macro", "f1_macro",
@@ -182,6 +212,9 @@ def main():
                         "false_alarm_rate"]
     }
     if verbose:
+        for k in ("persistence_test", "always_normal_test"):
+            b = baselines[k]
+            print(f"    Acuan {k}: acc={b['accuracy']:.4f} f1_macro={b['f1_macro']:.4f}")
         print("    Perbandingan metrik (TFT-base vs TFT-IF):")
         for m, v in comparison.items():
             print(f"      {m}: base={v['TFT_base']:.4f}  if={v['TFT_IF']:.4f}")
@@ -202,6 +235,8 @@ def main():
             "dropout": model_cfg.dropout,
             "attn_heads": model_cfg.attn_heads,
             "learning_rate": train_cfg.learning_rate,
+            "batch_size": train_cfg.batch_size,
+            "seed": train_cfg.seed,
             "epochs_ran_base": len(hist_base["train_loss"]),
             "epochs_ran_if": len(hist_if["train_loss"]),
             "num_features_base": Xtr_base.shape[-1],
@@ -213,16 +248,17 @@ def main():
         "results_TFT_IF": results_if,
         "results_val_TFT_base": val_results_base,
         "results_val_TFT_IF": val_results_if,
+        "baselines": baselines,
         "comparison": comparison,
         "top10_feature_importance_TFT_IF": interp["feature_importance_ranked"][:10],
         "if_score_feature_rank": if_contribution,
     }
 
-    with open(PATHS.results_file, "w") as f:
+    with open(results_file, "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
     if verbose:
-        print(f"\nSelesai. Ringkasan hasil disimpan di {PATHS.results_file}")
+        print(f"\nSelesai. Ringkasan hasil disimpan di {results_file}")
         print(f"Peringkat pentingnya fitur if_score: {if_contribution}")
 
     return summary
