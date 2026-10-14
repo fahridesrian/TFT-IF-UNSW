@@ -33,8 +33,8 @@
 | A12 | **Interpretable multi-head attention Eq. 13–16** Lim 2021 | bukan MHA standar |
 | A13 | **Entity embeddings** untuk fitur kategorikal di VSN | mengikuti paper §4.2 |
 | A14 | Artefak pelaporan: **per-kelas, per-horizon, distribusi split, EDA** | semua tersedia |
-| A15 | **Empat kelas = empat kategori dengan rekaman terbanyak** (Normal, Generic, Exploits, Fuzzers); enam lainnya dibuang | lihat §0.9 |
-| A16 | **Acuan persistensi** (label rekaman terakhir) sebagai satu baris referensi | lihat §0.10 |
+| A15 | **Empat kelas = empat kategori dengan rekaman terbanyak** (Normal, Generic, Exploits, Fuzzers); enam lainnya dibuang | lihat §0.15 |
+| A16 | **Acuan persistensi** (label rekaman terakhir) sebagai satu baris referensi | lihat §0.16 |
 | A17 | **Batch 4096** (naik dari 1024, 13 Okt 2026) | efisiensi: <1 menit/epoch vs 4–5 menit; lihat §6 |
 
 ### 0.1 A1 — 41/42 fitur (drop IP & port)
@@ -229,7 +229,7 @@ kontinu) tetap unscaled karena s(x,n) sudah berada di (0,1).
    boxplot per kelas, heatmap korelasi → `logs/eda/`.
    Jalankan: `python eda.py` (data asli; `--sample` mengatur ukuran sampel plot).
 
-### 0.9 A15 — Mengapa empat kelas
+### 0.15 A15 — Mengapa empat kelas
 Dataset sangat tidak seimbang. Untuk mengurangi ketidakseimbangan dipilih
 **empat kategori dengan jumlah rekaman terbanyak**: Normal 2.218.764, Generic
 215.481, Exploits 44.525, Fuzzers 24.246 (CSV asli); enam kategori lain (DoS,
@@ -238,7 +238,7 @@ sebelum deduplikasi). Imbalance ratio ≈ 91,5 (Normal:Fuzzers). Tidak memakai
 ambang persentase tertentu. Angka final menunggu keluaran `main.py` setelah
 deduplikasi (jumlah Generic turun sangat besar karena duplikat).
 
-### 0.10 A16 — Acuan persistensi
+### 0.16 A16 — Acuan persistensi
 Prediksi "kelas rekaman berikutnya = kelas rekaman terakhir" memakai **label
 sebenarnya** yang tidak dimiliki model (model hanya melihat fitur lalu
 lintas), sehingga hanya **satu baris acuan** pada tabel hasil, bukan pesaing.
