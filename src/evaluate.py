@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, confusion_matrix,
+    roc_auc_score, average_precision_score,
 )
 
 from config import DATA, MODEL, TRAIN
@@ -39,9 +40,56 @@ def _false_alarm_rate(y_true_flat, y_pred_flat, normal_idx: int) -> float:
     return float(fp / (fp + tn)) if (fp + tn) > 0 else float("nan")
 
 
+@torch.no_grad()
+def predict_proba(model, X: np.ndarray, batch_size: int = 256, device: str = None):
+    """Probabilitas softmax (N, T, C), float32."""
+    device = device or (TRAIN.device if torch.cuda.is_available() else "cpu")
+    model.eval()
+    model.to(device)
+    out = []
+    for i in range(0, len(X), batch_size):
+        xb = torch.tensor(X[i:i + batch_size], dtype=torch.float32).to(device)
+        out.append(torch.softmax(model(xb), dim=-1).cpu().numpy())
+    return np.concatenate(out, axis=0)
+
+
+def threshold_free_metrics(proba: np.ndarray, Y: np.ndarray, class_names=None):
+    """Metrik tanpa ambang (analisis pendukung): ROC-AUC dan PR-AUC
+    (average precision) satu-lawan-semua per kelas, rata-rata makro, dan
+    Normal-vs-serangan (skor = 1 - P(Normal)). `prevalence` = nilai PR-AUC
+    bila skor acak, sebagai pembanding."""
+    class_names = class_names or list(DATA.classes_used)
+    normal_idx = class_names.index("Normal")
+    C = len(class_names)
+    p = proba.reshape(-1, C)
+    y = Y.reshape(-1)
+
+    def _pair(y_bin, score):
+        if y_bin.sum() == 0 or y_bin.all():
+            return {"roc_auc": float("nan"), "pr_auc": float("nan"),
+                    "prevalence": float(y_bin.mean())}
+        return {
+            "roc_auc": float(roc_auc_score(y_bin, score)),
+            "pr_auc": float(average_precision_score(y_bin, score)),
+            "prevalence": float(y_bin.mean()),
+        }
+
+    per_class = {name: _pair(y == i, p[:, i]) for i, name in enumerate(class_names)}
+    macro = {k: float(np.nanmean([v[k] for v in per_class.values()]))
+             for k in ("roc_auc", "pr_auc", "prevalence")}
+    return {
+        "per_class": per_class,
+        "macro": macro,
+        "normal_vs_attack": _pair(y != normal_idx, 1.0 - p[:, normal_idx]),
+    }
+
+
 def evaluate_model(model, X: np.ndarray, Y: np.ndarray, class_names=None):
-    y_pred = predict(model, X)  # (N, T)
-    return evaluate_predictions(y_pred, Y, class_names)
+    proba = predict_proba(model, X)       # (N, T, C)
+    y_pred = proba.argmax(axis=-1)        # (N, T), sama dengan predict()
+    results = evaluate_predictions(y_pred, Y, class_names)
+    results["threshold_free"] = threshold_free_metrics(proba, Y, class_names)
+    return results
 
 
 def baseline_predictions(Y: np.ndarray, last_labels: np.ndarray, kind: str,

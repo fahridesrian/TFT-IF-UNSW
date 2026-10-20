@@ -249,6 +249,19 @@ def main():
                         "precision_weighted", "recall_weighted", "f1_weighted",
                         "false_alarm_rate"]
     }
+    # Metrik tanpa ambang (analisis pendukung) ikut masuk ringkasan perbandingan.
+    comparison["roc_auc_macro"] = {
+        "TFT_base": results_base["threshold_free"]["macro"]["roc_auc"],
+        "TFT_IF": results_if["threshold_free"]["macro"]["roc_auc"],
+    }
+    comparison["pr_auc_macro"] = {
+        "TFT_base": results_base["threshold_free"]["macro"]["pr_auc"],
+        "TFT_IF": results_if["threshold_free"]["macro"]["pr_auc"],
+    }
+    comparison["pr_auc_normal_vs_attack"] = {
+        "TFT_base": results_base["threshold_free"]["normal_vs_attack"]["pr_auc"],
+        "TFT_IF": results_if["threshold_free"]["normal_vs_attack"]["pr_auc"],
+    }
     if verbose:
         for k in ("persistence_test", "always_normal_test"):
             b = baselines[k]
