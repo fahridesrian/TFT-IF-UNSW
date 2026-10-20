@@ -80,3 +80,4 @@ data/
 *.tmp
 *.bak
 *.swp
+*.patch

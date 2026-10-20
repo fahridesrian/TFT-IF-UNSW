@@ -89,7 +89,7 @@ mengambil (W,T) terbaiknya sendiri; selain itu dilaporkan perbandingan pada
 dipakai memilih. Hasil disimpan **per kombinasi** (nama berkas memuat model, W,
 T). Default sampai grid selesai: W=10, T=3. **Status kode: diterapkan**
 (`run_grid.py` menjalankan `main.py --window W --horizon T --seed S`; hasil
-per kombinasi di `logs/results_summary_W{W}_T{T}_seed{S}.json`; run 13 Okt
+per run di folder `logs/runs/<tanggal-jam>_W{W}_T{T}_seed{S}_<grid-id>/`; run 13 Okt
 memakai W=10, T=3 tanpa grid). Catatan: T berbeda mengubah tugas prediksi; bandingkan antarmodel hanya
 pada T yang sama bila membandingkan metrik secara langsung.
 
@@ -273,7 +273,7 @@ data_loading (headerless 49 kolom, fallback names=config)
   → [opsional: Optuna tuning pada TFT-IF] / grid (W,T) pada kedua model (A3)
   → train TFT-base & TFT-IF (hyperparameter identik)
   → evaluate test + val (flatten N·T, per kelas, per horizon) + acuan persistensi (A16)
-  → interpret (VSN + attention Ã) → logs/results_summary.json + checkpoints
+  → interpret (VSN + attention Ã) → logs/runs/<tanggal-jam>_W.._T.._seed..[_tag]/ (results_summary.json, checkpoint, run.log)
 ```
 
 ## 2. Data & Praproses (`data_loading.py`, `preprocessing.py`)
@@ -482,10 +482,14 @@ ke-12 (`prechelt1998_early_stopping_summary.md`).
    agar tidak tertimpa). (W=50 butuh ±24–32 GB RAM — lihat §0.3.)
 4. Run final pada (W,T) terbaik tiap model, ≥3 seed (42, 43, 44): laporkan
    rata-rata ± simpangan baku (+ `--tune` bila ingin tuning lebih dulu).
-5. Cek `logs/results_summary.json`: comparison base vs IF, `per_class`,
+5. Cek `logs/runs/<run>/results_summary.json`: comparison base vs IF, `per_class`,
    `per_horizon`, rank `if_score`, distribusi split.
 6. Jika OOM GPU (RTX 3060 12 GB): turunkan `batch_size` dulu, baru `hidden_size`.
 7. Simpan seed & konfigurasi final yang dipakai untuk setiap tabel skripsi.
+   Tiap run otomatis punya folder sendiri (`logs/runs/<tanggal-jam>_W.._T.._seed..`)
+   berisi `results_summary.json` (memuat perintah, waktu mulai, seed), checkpoint,
+   dan `run.log`; tidak ada yang tertimpa. Hapus folder lama secara manual;
+   tambahkan `logs/runs/` ke `.gitignore` bila tidak ingin ikut ter-commit.
 8. **Checkpoint lama (pra-v1.1) tidak valid** — arsitektur berubah (A12/A13);
    semua hasil harus dari training sesudah tanggal ini.
 

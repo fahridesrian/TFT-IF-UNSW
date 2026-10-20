@@ -16,6 +16,7 @@ import copy
 import json
 import os
 import sys
+from datetime import datetime
 
 # Memungkinkan `python main.py` dijalankan langsung dari root repo tanpa
 # perlu `pip install -e .` lebih dulu (modul flat di src/).
@@ -35,6 +36,43 @@ from interpret import extract_interpretation, summarize_if_contribution
 from hyperparameter_tuning import run_tuning
 
 
+class _Tee:
+    """Menyalin tulisan stdout ke berkas log run (run.log) tanpa mengubah
+    tampilan di konsol. Progress bar tqdm ada di stderr, jadi tidak ikut."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, s):
+        for st in self.streams:
+            st.write(s)
+            st.flush()
+        return len(s)
+
+    def flush(self):
+        for st in self.streams:
+            st.flush()
+
+    def isatty(self):
+        return False
+
+
+def make_run_dir(logs_dir: str, W: int, T: int, seed: int, tag: str = None):
+    """Folder unik per run: logs/runs/<YYYYMMDD-HHMMSS>_W<W>_T<T>_seed<S>[_tag].
+    Tiap run punya foldernya sendiri (hasil JSON, checkpoint, run.log), jadi
+    tidak ada yang tertimpa dan folder lama bisa dihapus satu per satu."""
+    stem = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_W{W}_T{T}_seed{seed}"
+    if tag:
+        stem += f"_{tag}"
+    run_dir = os.path.join(logs_dir, "runs", stem)
+    n = 1
+    while os.path.exists(run_dir):  # dua run dalam detik yang sama
+        n += 1
+        run_dir = os.path.join(logs_dir, "runs", f"{stem}_{n}")
+    os.makedirs(run_dir)
+    return os.path.basename(run_dir), run_dir
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--raw-dir", type=str, default=DATA.raw_dir)
@@ -48,9 +86,9 @@ def parse_args():
     p.add_argument("--seed", type=int, default=None,
                    help="Seed pelatihan model (A: >=3 seed pada (W,T) terbaik)")
     p.add_argument("--tag", type=str, default=None,
-                   help="Akhiran nama berkas hasil/checkpoint. Default: bila "
-                        "--window/--horizon/--seed diberikan, dibentuk otomatis "
-                        "(W{W}_T{T}_seed{S}) agar hasil tiap kombinasi tidak tertimpa")
+                   help="Label opsional di akhir nama folder run (mis. 'grid20261020-1030'). "
+                        "Nama folder selalu memuat tanggal-jam, W, T, dan seed, "
+                        "sehingga tiap run tidak saling menimpa")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args()
 
@@ -58,7 +96,7 @@ def parse_args():
 def main():
     args = parse_args()
     os.makedirs(PATHS.logs_dir, exist_ok=True)
-    os.makedirs(PATHS.checkpoints_dir, exist_ok=True)
+    started_at = datetime.now().isoformat(timespec="seconds")
 
     verbose = not args.quiet
     train_cfg = copy.deepcopy(TRAIN)
@@ -75,16 +113,16 @@ def main():
     if verbose and (args.window or args.horizon):
         print(f"    Override window: W={WINDOW.W}, T={WINDOW.T}")
 
-    # Nama berkas hasil per kombinasi (A3): tanpa argumen -> nama lama.
-    tag = args.tag
-    if tag is None and (args.window or args.horizon or args.seed is not None):
-        tag = f"W{WINDOW.W}_T{WINDOW.T}_seed{train_cfg.seed}"
-    results_file = PATHS.results_file
-    ckpt_suffix = ""
-    if tag:
-        base, ext = os.path.splitext(PATHS.results_file)
-        results_file = f"{base}_{tag}{ext}"
-        ckpt_suffix = f"_{tag}"
+    # Semua output run ini (hasil JSON, checkpoint, log) masuk satu folder
+    # unik: logs/runs/<tanggal-jam>_W.._T.._seed..[_tag]/
+    run_id, run_dir = make_run_dir(
+        PATHS.logs_dir, WINDOW.W, WINDOW.T, train_cfg.seed, args.tag
+    )
+    results_file = os.path.join(run_dir, "results_summary.json")
+    log_fh = open(os.path.join(run_dir, "run.log"), "w", encoding="utf-8")
+    sys.stdout = _Tee(sys.__stdout__, log_fh)
+    print(f"Run: {run_id}  ->  {run_dir}")
+    print(f"Perintah: python {' '.join(sys.argv)}")
 
     # 1. Load data (Bagian 6.b)
     if verbose:
@@ -170,7 +208,7 @@ def main():
     )
     # Simpan langsung (bukan menunggu TFT-IF selesai): kalau run crash di
     # tengah jalan, 17+ epoch TFT-base tidak hilang sia-sia.
-    torch.save(model_base.state_dict(), os.path.join(PATHS.checkpoints_dir, f"tft_base{ckpt_suffix}.pt"))
+    torch.save(model_base.state_dict(), os.path.join(run_dir, "tft_base.pt"))
 
     if verbose:
         print("[6/8] Melatih TFT-IF ...")
@@ -181,7 +219,7 @@ def main():
         categorical_features=cat_features,
     )
 
-    torch.save(model_if.state_dict(), os.path.join(PATHS.checkpoints_dir, f"tft_if{ckpt_suffix}.pt"))
+    torch.save(model_if.state_dict(), os.path.join(run_dir, "tft_if.pt"))
 
     # 7. Evaluasi & bandingkan (Bagian 6.i)
     if verbose:
@@ -230,6 +268,9 @@ def main():
 
     summary = {
         "config": {
+            "run_id": run_id,
+            "started_at": started_at,
+            "command": " ".join(sys.argv),
             "W": WINDOW.W, "T": WINDOW.T,
             "hidden_size": model_cfg.hidden_size,
             "dropout": model_cfg.dropout,
@@ -260,6 +301,9 @@ def main():
     if verbose:
         print(f"\nSelesai. Ringkasan hasil disimpan di {results_file}")
         print(f"Peringkat pentingnya fitur if_score: {if_contribution}")
+
+    sys.stdout = sys.__stdout__
+    log_fh.close()
 
     return summary
 
