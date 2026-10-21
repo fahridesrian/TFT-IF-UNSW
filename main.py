@@ -83,6 +83,9 @@ def parse_args():
                    help="Override WINDOW.W (untuk ablasi W/T, proposal 6.g.v)")
     p.add_argument("--horizon", type=int, default=None,
                    help="Override WINDOW.T (untuk ablasi W/T, proposal 6.g.v)")
+    p.add_argument("--batch-size", type=int, default=None,
+                   help="Override TRAIN.batch_size (mis. 2048 bila GPU kehabisan memori "
+                        "pada W besar). Tercatat di results_summary.json")
     p.add_argument("--seed", type=int, default=None,
                    help="Seed pelatihan model (A: >=3 seed pada (W,T) terbaik)")
     p.add_argument("--tag", type=str, default=None,
@@ -104,6 +107,8 @@ def main():
         train_cfg.epochs = args.epochs
     if args.seed is not None:
         train_cfg.seed = args.seed
+    if args.batch_size:
+        train_cfg.batch_size = args.batch_size
     # Override W/T untuk ablasi tanpa menyentuh config.py (WINDOW adalah
     # singleton config yang juga dibaca sliding_window.build_windows).
     if args.window:

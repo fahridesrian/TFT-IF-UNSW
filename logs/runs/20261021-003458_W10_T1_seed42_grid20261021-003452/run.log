@@ -1,0 +1,64 @@
+Run: 20261021-003458_W10_T1_seed42_grid20261021-003452  ->  logs\runs\20261021-003458_W10_T1_seed42_grid20261021-003452
+Perintah: python main.py --window 10 --horizon 1 --seed 42 --tag grid20261021-003452 --epochs 30 --batch-size 2048
+[1/8] Memuat data mentah UNSW-NB15 ...
+    Peringatan UNSW-NB15_4.csv: 11 baris rusak dilewati (dari 440048 baris fisik).
+[2/8] Praproses data ...
+    Distribusi kelas per split:
+      train: {'Normal': 1387816, 'Generic': 11360, 'Exploits': 13798, 'Fuzzers': 11201}
+      val: {'Normal': 285668, 'Generic': 7105, 'Exploits': 6845, 'Fuzzers': 5562}
+      test: {'Normal': 286280, 'Generic': 6913, 'Exploits': 6956, 'Fuzzers': 5032}
+[3/8] Melatih Isolation Forest & menghitung skor anomali ...
+[4/8] Membentuk sliding window ...
+    TFT-base X_train shape: (1424145, 10, 41), Y_train shape: (1424145, 1)
+    TFT-IF   X_train shape: (1424145, 10, 42), Y_train shape: (1424145, 1)
+[5/8] Melewati tuning (gunakan --tune untuk mengaktifkan).
+[6/8] Melatih TFT-base ...
+  [TFT-base] epoch 1/30 train_loss=1.1671 val_loss=1.1827
+  [TFT-base] epoch 2/30 train_loss=1.0817 val_loss=1.1802
+  [TFT-base] epoch 3/30 train_loss=1.0518 val_loss=1.1245
+  [TFT-base] epoch 4/30 train_loss=1.0385 val_loss=1.1612
+  [TFT-base] epoch 5/30 train_loss=1.0272 val_loss=1.1151
+  [TFT-base] epoch 6/30 train_loss=1.0207 val_loss=1.1794
+  [TFT-base] epoch 7/30 train_loss=1.0136 val_loss=1.1230
+  [TFT-base] epoch 8/30 train_loss=1.0067 val_loss=1.1516
+  [TFT-base] epoch 9/30 train_loss=0.9901 val_loss=1.1180
+  [TFT-base] epoch 10/30 train_loss=0.9849 val_loss=1.1134
+  [TFT-base] epoch 11/30 train_loss=0.9789 val_loss=1.1401
+  [TFT-base] epoch 12/30 train_loss=0.9747 val_loss=1.1176
+  [TFT-base] epoch 13/30 train_loss=0.9706 val_loss=1.1304
+  [TFT-base] epoch 14/30 train_loss=0.9563 val_loss=1.1201
+  [TFT-base] epoch 15/30 train_loss=0.9516 val_loss=1.1335
+  [TFT-base] Early stopping at epoch 15
+[6/8] Melatih TFT-IF ...
+  [TFT-IF] epoch 1/30 train_loss=1.1530 val_loss=1.1754
+  [TFT-IF] epoch 2/30 train_loss=1.0817 val_loss=1.1697
+  [TFT-IF] epoch 3/30 train_loss=1.0512 val_loss=1.1253
+  [TFT-IF] epoch 4/30 train_loss=1.0358 val_loss=1.1230
+  [TFT-IF] epoch 5/30 train_loss=1.0283 val_loss=1.1096
+  [TFT-IF] epoch 6/30 train_loss=1.0196 val_loss=1.1147
+  [TFT-IF] epoch 7/30 train_loss=1.0106 val_loss=1.1033
+  [TFT-IF] epoch 8/30 train_loss=1.0048 val_loss=1.1117
+  [TFT-IF] epoch 9/30 train_loss=1.0014 val_loss=1.1158
+  [TFT-IF] epoch 10/30 train_loss=0.9943 val_loss=1.1101
+  [TFT-IF] epoch 11/30 train_loss=0.9773 val_loss=1.1069
+  [TFT-IF] epoch 12/30 train_loss=0.9701 val_loss=1.1121
+  [TFT-IF] Early stopping at epoch 12
+[7/8] Mengevaluasi model pada data uji ...
+    Acuan persistence_test: acc=0.9124 f1_macro=0.3889
+    Acuan always_normal_test: acc=0.9381 f1_macro=0.2420
+    Perbandingan metrik (TFT-base vs TFT-IF):
+      accuracy: base=0.6126  if=0.5778
+      precision_macro: base=0.2990  if=0.2962
+      recall_macro: base=0.4988  if=0.5018
+      f1_macro: base=0.2816  if=0.2699
+      precision_weighted: base=0.9286  if=0.9304
+      recall_weighted: base=0.6126  if=0.5778
+      f1_weighted: base=0.7234  if=0.6952
+      false_alarm_rate: base=0.3775  if=0.4168
+      roc_auc_macro: base=0.8114  if=0.8092
+      pr_auc_macro: base=0.3425  if=0.3449
+      pr_auc_normal_vs_attack: base=0.3675  if=0.3683
+[8/8] Mengekstraksi interpretabilitas (VSN + attention) dari TFT-IF ...
+
+Selesai. Ringkasan hasil disimpan di logs\runs\20261021-003458_W10_T1_seed42_grid20261021-003452\results_summary.json
+Peringkat pentingnya fitur if_score: {'rank': 3, 'importance_score': 0.10801520198583603, 'total_features': 42}
