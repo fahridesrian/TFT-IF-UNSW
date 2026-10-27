@@ -81,7 +81,8 @@ class TrainConfig:
     lr_scheduler_factor: float = 0.5
     device: str = "cuda" if os.environ.get("FORCE_CPU") != "1" else "cpu"
     seed: int = 42
-    num_workers: int = 0  # untuk DataLoader
+    # num_workers: int = 0  # untuk DataLoader
+    num_workers: int = int(os.environ.get("TFT_NUM_WORKERS", 6))  # untuk DataLoader
 
 
 @dataclass

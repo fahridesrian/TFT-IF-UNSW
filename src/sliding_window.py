@@ -11,42 +11,38 @@ encoding/scaling, fungsi build_windows_for_split di bawah menerima daftar
 sub-dataframe per file (caller bertanggung jawab menjaga pemisahan ini
 sebelum kolom source_file di-drop).
 """
+import itertools
+import os
+
 import numpy as np
 import pandas as pd
 from typing import List, Tuple
 
 from config import DATA, WINDOW
 
+CHUNK = 50_000  # jendela per potongan saat mengisi larik keluaran
+_COUNTER = itertools.count()
 
-def _windows_from_single_segment(
-    df_segment: pd.DataFrame, feature_cols: List[str], target_col: str,
-    W: int, T: int, stride: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+
+def _segment_arrays(df_segment, feature_cols, target_col, W, T, stride):
+    """(X float32 (n, F), Y (n,), starts) untuk satu segmen, atau None bila n < W + T."""
     n = len(df_segment)
-    F = len(feature_cols)
     if n < W + T:
-        return (
-            np.empty((0, W, F), dtype=np.float32),
-            np.empty((0, T), dtype=np.int64),
-        )
-    # float32 sejak awal: train.make_loader (.float()) jadi no-op tanpa
-    # salinan, dan ukuran array setengah dari float64. Model hanya butuh
-    # presisi float32 (AMP bahkan memakai float16 di GPU).
+        return None
     X = df_segment[feature_cols].to_numpy(dtype=np.float32)
     Y = df_segment[target_col].to_numpy()
     starts = np.arange(0, n - W - T + 1, stride)
-    num = len(starts)
-    # sliding_window_view = tampilan ber-stride tanpa menyalin; ambil
-    # salinan contiguous sekali per segmen (bukan 1,4 juta array per-baris
-    # seperti loop lama yang memakan memori sementara 2x lipat).
-    X_view = np.lib.stride_tricks.sliding_window_view(X, W, axis=0)
-    # sliding_window_view(X, W, axis=0) -> (n-W+1, F, W); transpose ke (n-W+1, W, F)
-    Xw = np.ascontiguousarray(X_view[starts, :, :].transpose(0, 2, 1))
-    Y_view = np.lib.stride_tricks.sliding_window_view(Y, T)
-    Yw = np.ascontiguousarray(Y_view[starts + W].astype(np.int64, copy=False))
-    assert Xw.shape == (num, W, F), (Xw.shape, num, W, F)
-    assert Yw.shape == (num, T), (Yw.shape, num, T)
-    return Xw, Yw
+    return X, Y, starts
+
+
+def _alloc_windows(shape, memmap_dir, nama):
+    """Larik keluaran. Dengan memmap_dir, larik disimpan di berkas (tidak memakai
+    batas commit/pagefile Windows); tanpa itu, larik biasa di RAM."""
+    if memmap_dir:
+        os.makedirs(memmap_dir, exist_ok=True)
+        path = os.path.join(memmap_dir, f"{nama}_{os.getpid()}_{next(_COUNTER)}.npy")
+        return np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=shape)
+    return np.empty(shape, dtype=np.float32)
 
 
 def build_windows(
@@ -54,29 +50,54 @@ def build_windows(
     target_col: str = None, W: int = None, T: int = None, stride: int = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """df_with_source harus masih memiliki kolom source_file (belum di-drop)
-    dan sudah terurut kronologis di dalam tiap file."""
+    dan sudah terurut kronologis di dalam tiap file.
+
+    Larik keluaran dialokasikan sekali dengan ukuran akhir lalu diisi per
+    potongan (CHUNK jendela), sehingga memori puncak = ukuran larik akhir +
+    satu potongan. Versi lama membuat salinan per segmen, salinan transpose,
+    lalu np.concatenate (sekitar 2 sampai 3 kali ukuran akhir; gagal pada W=50).
+    Isi larik identik dengan versi lama.
+
+    Bila variabel lingkungan TFT_WINDOW_MEMMAP berisi nama folder, larik X
+    disimpan sebagai berkas .npy di folder itu (memmap), bukan di RAM."""
     target_col = target_col or DATA.target_col
     W = W or WINDOW.W
     T = T or WINDOW.T
     stride = stride or WINDOW.stride
+    F = len(feature_cols)
+    memmap_dir = os.environ.get("TFT_WINDOW_MEMMAP") or None
 
-    all_X, all_Y = [], []
+    segs = []
+    total = 0
     for _, seg in df_with_source.groupby(DATA.source_file_col, sort=False):
-        Xw, Yw = _windows_from_single_segment(seg, feature_cols, target_col, W, T, stride)
-        if len(Xw) > 0:
-            all_X.append(Xw)
-            all_Y.append(Yw)
+        a = _segment_arrays(seg, feature_cols, target_col, W, T, stride)
+        if a is not None and len(a[2]) > 0:
+            segs.append(a)
+            total += len(a[2])
 
-    if not all_X:
+    if total == 0:
         return (
-            np.empty((0, W, len(feature_cols)), dtype=np.float32),
+            np.empty((0, W, F), dtype=np.float32),
             np.empty((0, T), dtype=np.int64),
         )
 
-    return (
-        np.concatenate(all_X, axis=0).astype(np.float32, copy=False),
-        np.concatenate(all_Y, axis=0).astype(np.int64, copy=False),
-    )
+    Xw = _alloc_windows((total, W, F), memmap_dir, "X")
+    Yw = np.empty((total, T), dtype=np.int64)
+    pos = 0
+    for X, Y, starts in segs:
+        # sliding_window_view(X, W, axis=0) -> (n-W+1, F, W): tampilan tanpa salinan
+        X_view = np.lib.stride_tricks.sliding_window_view(X, W, axis=0)
+        Y_view = np.lib.stride_tricks.sliding_window_view(Y, T)
+        for i in range(0, len(starts), CHUNK):
+            idx = starts[i:i + CHUNK]
+            k = len(idx)
+            Xw[pos:pos + k] = X_view[idx].transpose(0, 2, 1)
+            Yw[pos:pos + k] = Y_view[idx + W].astype(np.int64, copy=False)
+            pos += k
+    assert pos == total, (pos, total)
+    if memmap_dir:
+        Xw.flush()
+    return Xw, Yw
 
 
 def build_last_labels(

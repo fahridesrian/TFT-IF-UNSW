@@ -44,8 +44,11 @@ def make_loader(X: np.ndarray, Y: np.ndarray, batch_size: int, shuffle: bool,
     # worker ≈ 17 GB → MemoryError saat latih model kedua, ketika array
     # base+IF dua-duanya ada di RAM). share_memory_ membuat worker memetakan
     # memori yang sama tanpa menyalin. workers=6 spec §6 tetap dipenuhi.
-    X_t.share_memory_()
-    Y_t.share_memory_()
+    # X_t.share_memory_()
+    # Y_t.share_memory_()
+    if num_workers > 0:
+        X_t.share_memory_()
+        Y_t.share_memory_()
     ds = TensorDataset(X_t, Y_t)
     return DataLoader(
         ds,
